@@ -17,7 +17,7 @@ Library._configFolder      = "Obscura"
 Library.ScriptName         = "Obscura"
 Library._mobileActions     = {}
 Library._keybinds          = {}
-
+ф
 local UIS         = game:GetService("UserInputService")
 local TS          = game:GetService("TweenService")
 local RS          = game:GetService("RunService")
@@ -346,6 +346,72 @@ local function isInside(f, p)
     local pp, ss = f.AbsolutePosition, f.AbsoluteSize
     return p.X >= pp.X and p.X <= pp.X + ss.X
        and p.Y >= pp.Y and p.Y <= pp.Y + ss.Y
+end
+
+local function viewportSize()
+    local cam = workspace.CurrentCamera
+    return (cam and cam.ViewportSize) or Vector2.new(800, 600)
+end
+
+local function smartWindowSize(requested, opts, verticalTabs)
+    opts = opts or {}
+    if opts.AutoSize == false or typeof(requested) ~= "UDim2" then
+        return requested
+    end
+    if requested.X.Scale ~= 0 or requested.Y.Scale ~= 0 then
+        return requested
+    end
+
+    local vp = viewportSize()
+    local margin = UIS.TouchEnabled and 20 or 32
+    local maxW = math.max(300, vp.X - margin)
+    local maxH = math.max(260, vp.Y - margin)
+    local minW = tonumber(opts.MinWidth) or (verticalTabs and 390 or 340)
+    local minH = tonumber(opts.MinHeight) or 300
+    if UIS.TouchEnabled or vp.X < 520 then
+        minW = math.min(minW, 320)
+        minH = math.min(minH, 280)
+    end
+
+    local w = clamp(requested.X.Offset, math.min(minW, maxW), maxW)
+    local h = clamp(requested.Y.Offset, math.min(minH, maxH), maxH)
+    return UDim2.fromOffset(math.floor(w), math.floor(h))
+end
+
+local function smartTabWidth(requested, rootWidth, opts)
+    opts = opts or {}
+    local w = tonumber(requested) or 104
+    if opts.AutoSize ~= false then
+        local maxAllowed = math.max(80, math.floor((rootWidth or 540) * 0.26))
+        w = clamp(w, 80, maxAllowed)
+        if (rootWidth or 540) <= 430 then
+            w = math.min(w, 88)
+        end
+    end
+    return math.floor(w)
+end
+
+local function fitWindowToViewport(root, opts)
+    opts = opts or {}
+    if opts.AutoPosition == false or not root or not root.Parent then return end
+    local vp = viewportSize()
+    local size = root.AbsoluteSize
+    if size.X <= 0 or size.Y <= 0 then return end
+
+    local margin = UIS.TouchEnabled and 8 or 12
+    local minX = margin
+    local minY = margin
+    local maxX = math.max(minX, vp.X - size.X - margin)
+    local maxY = math.max(minY, vp.Y - size.Y - margin)
+    local x = clamp(root.AbsolutePosition.X, minX, maxX)
+    local y = clamp(root.AbsolutePosition.Y, minY, maxY)
+    if math.abs(x - root.AbsolutePosition.X) < 1 and math.abs(y - root.AbsolutePosition.Y) < 1 then
+        return
+    end
+    root.Position = UDim2.fromOffset(
+        x + size.X * root.AnchorPoint.X,
+        y + size.Y * root.AnchorPoint.Y
+    )
 end
 
 local function drawChevron(parent, w, color)
@@ -1001,7 +1067,7 @@ function Library:Destroy()
     Library.ScreenGui = nil
     Library.Windows, Library.Flags, Library.FlagCallbacks = {}, {}, {}
     Library.UnloadCallbacks, Library.FlagBindings, Library.ConfigStore = {}, {}, {}
-    Library.MobileButton, Library.NotifyHolder = nil, nil
+    Library.MobileButton, Library.NotifyHolder, Library.PrimaryWindow = nil, nil, nil
     Library._activeDropdown, Library._activeColorpicker, Library._listeningKeybind = nil, nil, nil
     Library._mobileActions, Library._keybinds = {}, {}
     Library._notifications = {}
@@ -1047,7 +1113,13 @@ local function makeMobileButton()
     drawHamburger(iconHolder, 20, Theme.AccentText)
 
     makeDraggable(btn)
-    btn.MouseButton1Click:Connect(function() Library:Toggle() end)
+    btn.MouseButton1Click:Connect(function()
+        if Library.PrimaryWindow and Library.PrimaryWindow.Toggle then
+            Library.PrimaryWindow:Toggle()
+        else
+            Library:Toggle()
+        end
+    end)
     Library.MobileButton = btn
 end
 
@@ -1335,18 +1407,25 @@ Window.__index = Window
 
 function Library:CreateWindow(opts)
     opts = opts or {}
+    local isPrimary = #Library.Windows == 0
     local title    = opts.Title    or "Obscura"
     local subtitle = opts.Subtitle or ""
-    local size     = opts.Size     or UDim2.fromOffset(540, 350)
     local position = opts.Position or UDim2.fromScale(0.5, 0.5)
     local anchor   = opts.AnchorPoint or Vector2.new(0.5, 0.5)
+    local hasToggleKey = opts.ToggleKey ~= false and (opts.ToggleKey ~= nil or isPrimary)
     local toggleKey= opts.ToggleKey or Enum.KeyCode.RightShift
     local mobile   = opts.MobileButton ~= false
     local layout   = tostring(opts.Layout or opts.MenuLayout or opts.TabLayout or opts.MenuOrientation or "horizontal"):lower()
     local verticalTabs = layout == "vertical" or layout == "left" or layout == "side"
+    local baseSize = opts.Size or UDim2.fromOffset(540, 350)
+    local size     = smartWindowSize(baseSize, opts, verticalTabs)
     local scriptName = tostring(opts.ScriptName or opts.Name or title or Library.ScriptName)
     local confirmClose = opts.ConfirmClose
     if confirmClose == nil then confirmClose = true end
+    local closeMode = tostring(opts.CloseMode or opts.CloseAction or (isPrimary and "library" or "hide")):lower()
+    local initialVisible = opts.Visible ~= false and opts.StartVisible ~= false
+    local searchWidth = tonumber(opts.SearchWidth) or 128
+    local searchEnabled = opts.Search ~= false
     Library.ScriptName = scriptName
     if opts.Accent then Theme.Accent = opts.Accent end
 
@@ -1477,6 +1556,7 @@ function Library:CreateWindow(opts)
         ScaleType              = Enum.ScaleType.Slice,
         SliceCenter            = Rect.new(12, 12, 244, 244),
         ZIndex                 = 1,
+        Visible                = initialVisible,
     })
 
     local root = new("Frame", {
@@ -1490,6 +1570,7 @@ function Library:CreateWindow(opts)
         ClipsDescendants = true,
         Active           = true,
         ZIndex           = 2,
+        Visible          = initialVisible,
     })
     corner(root, R_XL)
     local rootStroke = stroke(root, Theme.Border, 1)
@@ -1523,11 +1604,13 @@ function Library:CreateWindow(opts)
         BorderSizePixel  = 0,
     })
 
+    local subtitleText
+    local titleRightInset = searchEnabled and (searchWidth + 112) or 90
     local titleText = new("TextLabel", {
         Parent                 = titleBar,
         BackgroundTransparency = 1,
         Position               = UDim2.fromOffset(18, 6),
-        Size                   = UDim2.new(1, -90, 0, 18),
+        Size                   = UDim2.new(1, -titleRightInset, 0, 18),
         Font                   = FONT_SB,
         TextSize               = TEXT_LG,
         TextColor3             = Theme.Text,
@@ -1536,11 +1619,11 @@ function Library:CreateWindow(opts)
         Text                   = title,
     })
     if subtitle ~= "" then
-        new("TextLabel", {
+        subtitleText = new("TextLabel", {
             Parent                 = titleBar,
             BackgroundTransparency = 1,
             Position               = UDim2.fromOffset(18, 24),
-            Size                   = UDim2.new(1, -90, 0, 14),
+            Size                   = UDim2.new(1, -titleRightInset, 0, 14),
             Font                   = FONT,
             TextSize               = TEXT_SM,
             TextColor3             = Theme.SubText,
@@ -1550,7 +1633,7 @@ function Library:CreateWindow(opts)
         })
     else
         titleText.Position = UDim2.fromOffset(18, 0)
-        titleText.Size = UDim2.new(1, -90, 1, 0)
+        titleText.Size = UDim2.new(1, -titleRightInset, 1, 0)
     end
 
     local function makeIconBtn(order, drawFn, danger)
@@ -1593,7 +1676,13 @@ function Library:CreateWindow(opts)
     local closeBtn = makeIconBtn(1, drawCross, true)
     local minBtn   = makeIconBtn(2, drawMinus, false)
     local windowRef
-    minBtn.MouseButton1Click:Connect(function() Library:Toggle(false) end)
+    minBtn.MouseButton1Click:Connect(function()
+        if windowRef and windowRef.Toggle then
+            windowRef:Toggle(false)
+        else
+            Library:Toggle(false)
+        end
+    end)
     closeBtn.MouseButton1Click:Connect(function()
         if windowRef and windowRef.RequestClose then
             windowRef:RequestClose()
@@ -1603,7 +1692,8 @@ function Library:CreateWindow(opts)
     end)
 
     local tabBarH = tonumber(opts.TabBarHeight or opts.TabBarSize) or 56
-    local tabBarW = tonumber(opts.TabBarWidth or opts.TabBarSize) or 132
+    local baseTabBarW = tonumber(opts.TabBarWidth or opts.TabBarSize) or 104
+    local tabBarW = smartTabWidth(baseTabBarW, size.X.Offset, opts)
     local tabBar = new("Frame", {
         Parent           = root,
         Name             = "TabBar",
@@ -1662,11 +1752,7 @@ function Library:CreateWindow(opts)
         verticalTabs and 4 or 0,
         Enum.HorizontalAlignment.Center,
         verticalTabs and Enum.VerticalAlignment.Top or Enum.VerticalAlignment.Center)
-    if verticalTabs then
-        tabLayout.HorizontalFlex = Enum.UIFlexAlignment.Fill
-    else
-        tabLayout.HorizontalFlex = Enum.UIFlexAlignment.Fill
-    end
+    pcall(function() tabLayout.HorizontalFlex = Enum.UIFlexAlignment.Fill end)
 
     local indicator = new("Frame", {
         Parent           = tabBar,
@@ -1691,10 +1777,18 @@ function Library:CreateWindow(opts)
 
     makeDraggable(root, titleBar)
 
-    register(UIS.InputBegan:Connect(function(input, processed)
-        if processed then return end
-        if input.KeyCode == toggleKey then Library:Toggle() end
-    end))
+    if hasToggleKey then
+        register(UIS.InputBegan:Connect(function(input, processed)
+            if processed then return end
+            if input.KeyCode == toggleKey then
+                if windowRef and windowRef.Toggle then
+                    windowRef:Toggle()
+                else
+                    Library:Toggle()
+                end
+            end
+        end))
+    end
 
     if mobile then makeMobileButton() end
 
@@ -1703,7 +1797,7 @@ function Library:CreateWindow(opts)
         Parent                 = titleBar,
         AnchorPoint            = Vector2.new(1, 0.5),
         Position               = UDim2.new(1, -76, 0.5, 0),
-        Size                   = UDim2.fromOffset(140, 26),
+        Size                   = UDim2.fromOffset(searchWidth, 26),
         BackgroundColor3       = Theme.Bg2,
         BorderSizePixel        = 0,
         Font                   = FONT,
@@ -1716,6 +1810,7 @@ function Library:CreateWindow(opts)
         ClearTextOnFocus       = false,
         ClipsDescendants       = true,
         ZIndex                 = 10,
+        Visible                = searchEnabled,
     })
     corner(searchBox, R_PILL)
     pad(searchBox, 10, 0, 10, 0)
@@ -1741,6 +1836,8 @@ function Library:CreateWindow(opts)
         ActiveTab   = nil,
         Title       = title,
         ScriptName  = scriptName,
+        CloseMode   = closeMode,
+        OnClose     = opts.OnClose,
         ConfirmClose = confirmClose,
         CloseTitle  = type(confirmClose) == "table" and confirmClose.Title or nil,
         CloseText   = type(confirmClose) == "table" and confirmClose.Text or nil,
@@ -1751,6 +1848,45 @@ function Library:CreateWindow(opts)
         TabBarSize  = verticalTabs and tabBarW or tabBarH,
     }, Window)
     windowRef = self
+
+    function self:_applyResponsive()
+        local nextSize = smartWindowSize(baseSize, opts, verticalTabs)
+        root.Size = nextSize
+        shadow.Size = nextSize + UDim2.fromOffset(60, 60)
+
+        local width = nextSize.X.Offset > 0 and nextSize.X.Offset or root.AbsoluteSize.X
+        local compact = width > 0 and width < 450
+        local currentSearchWidth = compact and 0 or searchWidth
+        local showSearch = searchEnabled and not compact
+        searchBox.Visible = showSearch
+        searchBox.Size = UDim2.fromOffset(currentSearchWidth, 26)
+        searchBox.Position = UDim2.new(1, -76, 0.5, 0)
+
+        local rightInset = showSearch and (currentSearchWidth + 112) or 90
+        titleText.Size = UDim2.new(1, -rightInset, titleText.Size.Y.Scale, titleText.Size.Y.Offset)
+        if subtitleText then
+            subtitleText.Size = UDim2.new(1, -rightInset, 0, 14)
+        end
+
+        if verticalTabs then
+            local currentTabW = smartTabWidth(baseTabBarW, width, opts)
+            tabBar.Size = UDim2.new(0, currentTabW, 1, -44)
+            content.Position = UDim2.fromOffset(currentTabW, 44)
+            content.Size = UDim2.new(1, -currentTabW, 1, -44)
+            self.TabBarSize = currentTabW
+        else
+            tabBar.Size = UDim2.new(1, 0, 0, tabBarH)
+            content.Position = UDim2.fromOffset(0, 44)
+            content.Size = UDim2.new(1, 0, 1, -44 - tabBarH)
+            self.TabBarSize = tabBarH
+        end
+
+        fitWindowToViewport(root, opts)
+        task.defer(function()
+            if self.ActiveTab then self:_updateIndicator(self.ActiveTab, false) end
+        end)
+    end
+
     if wmFrame and wmTransparency > 0 then
         self:SetWatermarkTransparency(wmTransparency)
     end
@@ -1760,6 +1896,18 @@ function Library:CreateWindow(opts)
     end)
 
     table.insert(Library.Windows, self)
+    if isPrimary and not Library.PrimaryWindow then
+        Library.PrimaryWindow = self
+    end
+    self:_applyResponsive()
+    local cam = workspace.CurrentCamera
+    if cam then
+        register(cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            if self.Root and self.Root.Parent then
+                self:_applyResponsive()
+            end
+        end))
+    end
     return self
 end
 
@@ -1769,6 +1917,13 @@ end
 
 function Window:SetVisible(v)
     v = v and true or false
+    if not v then
+        if Library._activeDropdown then pcall(Library._activeDropdown.Close, Library._activeDropdown) end
+        if Library._activeColorpicker then pcall(Library._activeColorpicker.Close, Library._activeColorpicker) end
+        if Library._listeningKeybind then Library._listeningKeybind:Cancel() end
+    elseif self._applyResponsive then
+        self:_applyResponsive()
+    end
     if self.Root then self.Root.Visible = v end
     if self.Shadow then self.Shadow.Visible = v end
 end
@@ -1778,6 +1933,36 @@ function Window:Toggle(state)
         state = not (self.Root and self.Root.Visible)
     end
     self:SetVisible(state)
+end
+
+function Window:Destroy()
+    if self._destroyed then return end
+    self._destroyed = true
+    if self._closeConfirm and self._closeConfirm.Parent then self._closeConfirm:Destroy() end
+    if Library._activeDropdown then pcall(Library._activeDropdown.Close, Library._activeDropdown) end
+    if Library._activeColorpicker then pcall(Library._activeColorpicker.Close, Library._activeColorpicker) end
+    if self.Watermark and self.Watermark.Parent then self.Watermark:Destroy() end
+    if self.Shadow and self.Shadow.Parent then self.Shadow:Destroy() end
+    if self.Root and self.Root.Parent then self.Root:Destroy() end
+    for i, w in ipairs(Library.Windows) do
+        if w == self then table.remove(Library.Windows, i) break end
+    end
+    if Library.PrimaryWindow == self then
+        Library.PrimaryWindow = Library.Windows[1]
+    end
+    if self.OnClose then task.spawn(self.OnClose, self, "destroy") end
+end
+
+function Window:_closeNow()
+    local mode = tostring(self.CloseMode or "library"):lower()
+    if mode == "hide" or mode == "toggle" or mode == "minimize" then
+        self:SetVisible(false)
+        if self.OnClose then task.spawn(self.OnClose, self, "hide") end
+    elseif mode == "destroy" or mode == "window" then
+        self:Destroy()
+    else
+        Library:Destroy()
+    end
 end
 
 function Window:SetWatermarkTransparency(value)
@@ -1799,7 +1984,7 @@ end
 
 function Window:RequestClose()
     if self.ConfirmClose == false then
-        Library:Destroy()
+        self:_closeNow()
     else
         self:_showCloseConfirm()
     end
@@ -1910,7 +2095,7 @@ function Window:_showCloseConfirm()
     end)
     close.MouseButton1Click:Connect(function()
         if overlay and overlay.Parent then overlay:Destroy() end
-        Library:Destroy()
+        self:_closeNow()
     end)
 end
 
