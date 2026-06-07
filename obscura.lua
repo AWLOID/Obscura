@@ -5,7 +5,7 @@ Library.FlagCallbacks      = {}
 Library.Connections        = {}
 Library.Windows            = {}
 Library.Open               = true
-Library.Version            = "4.1.0"
+Library.Version            = "4.1.1"
 Library.Name               = "Obscura"
 Library._activeDropdown    = nil
 Library._activeColorpicker = nil
@@ -17,7 +17,7 @@ Library._configFolder      = "Obscura"
 Library.ScriptName         = "Obscura"
 Library._mobileActions     = {}
 Library._keybinds          = {}
-ф
+
 local UIS         = game:GetService("UserInputService")
 local TS          = game:GetService("TweenService")
 local RS          = game:GetService("RunService")
@@ -237,6 +237,14 @@ function Library:SetTheme(name, instant)
             end
         end
     end
+end
+
+function Library:SetAccent(color, instant)
+    if typeof(color) ~= "Color3" then return end
+    Theme.Accent = color
+    local current = self.Themes[self.CurrentTheme]
+    if current then current.Accent = color end
+    self:SetTheme(self.CurrentTheme or "light", instant ~= false)
 end
 
 local FONT, FONT_M, FONT_SB, FONT_B =
@@ -786,7 +794,7 @@ function Library:CreateMobileAction(opts)
             ImageRectSize          = iconSize,
             ImageColor3            = Theme.Text,
             ZIndex                 = 10002,
-            ScaleType              = Enum.ScaleType.Crop,
+            ScaleType              = Enum.ScaleType.Fit,
         })
     else
         icon = new("TextLabel", {
@@ -1505,7 +1513,7 @@ function Library:CreateWindow(opts)
                     ImageColor3            = Theme.Text,
                     ZIndex                 = 1000,
                     LayoutOrder            = 0,
-                    ScaleType              = Enum.ScaleType.Crop,
+                    ScaleType              = Enum.ScaleType.Fit,
                 })
             end
         end
@@ -2204,7 +2212,7 @@ function Window:CreateTab(name, iconAsset)
             ImageRectSize          = rectSize or Vector2.new(0, 0),
             ImageColor3            = Theme.SubText,
             LayoutOrder            = 1,
-            ScaleType              = rectOffset and Enum.ScaleType.Crop or Enum.ScaleType.Fit,
+            ScaleType              = Enum.ScaleType.Fit,
         })
         bindTheme(iconImg, "ImageColor3", "SubText")
     end
@@ -2297,15 +2305,16 @@ local function makeSettingsButton(parent, xOffset)
         Parent                 = parent,
         AnchorPoint            = Vector2.new(1, 0.5),
         Position               = UDim2.new(1, xOffset or -2, 0.5, 0),
-        Size                   = UDim2.fromOffset(26, 26),
+        Size                   = UDim2.fromOffset(28, 28),
         BackgroundColor3       = Theme.Bg2,
-        BackgroundTransparency = 1,
+        BackgroundTransparency = 0.35,
         BorderSizePixel        = 0,
         Text                   = "",
         AutoButtonColor        = false,
         ZIndex                 = 20,
     })
     corner(btn, R_PILL)
+    local btnStroke = stroke(btn, Theme.Border, 1)
 
     local iconImage, iconOffset, iconSize = getIcon("settings")
     local icon
@@ -2314,13 +2323,13 @@ local function makeSettingsButton(parent, xOffset)
             Parent                 = btn,
             AnchorPoint            = Vector2.new(0.5, 0.5),
             Position               = UDim2.fromScale(0.5, 0.5),
-            Size                   = UDim2.fromOffset(15, 15),
+            Size                   = UDim2.fromOffset(16, 16),
             BackgroundTransparency = 1,
             Image                  = iconImage,
             ImageRectOffset        = iconOffset,
             ImageRectSize          = iconSize,
             ImageColor3            = Theme.SubText,
-            ScaleType              = Enum.ScaleType.Crop,
+            ScaleType              = Enum.ScaleType.Fit,
             ZIndex                 = 21,
         })
         bindTheme(icon, "ImageColor3", "SubText")
@@ -2329,21 +2338,27 @@ local function makeSettingsButton(parent, xOffset)
             Parent                 = btn,
             AnchorPoint            = Vector2.new(0.5, 0.5),
             Position               = UDim2.fromScale(0.5, 0.5),
-            Size                   = UDim2.fromOffset(15, 15),
+            Size                   = UDim2.fromOffset(16, 16),
             BackgroundTransparency = 1,
             ZIndex                 = 21,
         })
-        icon = drawHamburger(holder, 15, Theme.SubText)
+        icon = drawHamburger(holder, 16, Theme.SubText)
     end
 
     btn.MouseEnter:Connect(function()
         tween(btn, 0.14, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Bg3 })
-        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then tween(icon, 0.14, { ImageColor3 = Theme.Text }) end
+        tween(btnStroke, 0.14, { Color = Theme.BorderHi })
+        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then
+            tween(icon, 0.14, { ImageColor3 = Theme.Text, Rotation = 18 })
+        end
         if icon and icon.SetColor then icon:SetColor(Theme.Text) end
     end)
     btn.MouseLeave:Connect(function()
-        tween(btn, 0.14, { BackgroundTransparency = 1 })
-        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then tween(icon, 0.14, { ImageColor3 = Theme.SubText }) end
+        tween(btn, 0.14, { BackgroundTransparency = 0.35, BackgroundColor3 = Theme.Bg2 })
+        tween(btnStroke, 0.14, { Color = Theme.Border })
+        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then
+            tween(icon, 0.14, { ImageColor3 = Theme.SubText, Rotation = 0 })
+        end
         if icon and icon.SetColor then icon:SetColor(Theme.SubText) end
     end)
     return btn
@@ -2510,6 +2525,7 @@ function Section:AddLabel(text, iconName)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.SubText,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "SubText")
     end
@@ -2599,9 +2615,15 @@ function Section:AddButton(opts)
     local style    = (opts.Style or "filled"):lower()
     local settingsSpec = opts.Settings
 
+    local outer = new("Frame", {
+        Parent                 = self.Content,
+        Size                   = UDim2.new(1, 0, 0, 38),
+        BackgroundTransparency = 1,
+    })
+
     local btn = new("TextButton", {
-        Parent           = self.Content,
-        Size             = UDim2.new(1, 0, 0, 38),
+        Parent           = outer,
+        Size             = settingsSpec and UDim2.new(1, -36, 1, 0) or UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = (style == "filled") and Theme.Accent or Theme.Bg,
         BorderSizePixel  = 0,
         Text             = "",
@@ -2628,6 +2650,7 @@ function Section:AddButton(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = (style == "filled") and Theme.AccentText or Theme.Text,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", (style == "filled") and "AccentText" or "Text")
     end
@@ -2635,8 +2658,7 @@ function Section:AddButton(opts)
     local label = new("TextLabel", {
         Parent                 = btn,
         BackgroundTransparency = 1,
-        Size                   = hasIcon and UDim2.new(1, settingsSpec and -64 or -32, 1, 0)
-                                  or UDim2.new(1, settingsSpec and -36 or 0, 1, 0),
+        Size                   = hasIcon and UDim2.new(1, -34, 1, 0) or UDim2.fromScale(1, 1),
         Position               = hasIcon and UDim2.new(0, 32, 0, 0) or UDim2.new(0, 0, 0, 0),
         Font                   = FONT_M,
         TextSize               = TEXT_MD,
@@ -2647,7 +2669,7 @@ function Section:AddButton(opts)
 
     local settingsSection
     if settingsSpec then
-        local settingsBtn = makeSettingsButton(btn, -8)
+        local settingsBtn = makeSettingsButton(outer, 0)
         settingsBtn.MouseButton1Click:Connect(function()
             if not settingsSection then
                 local panelOpts = normalizePanelSpec(settingsSpec, text .. " settings")
@@ -2698,9 +2720,15 @@ function Section:AddToggle(opts)
     })
     listLayout(outer, Enum.FillDirection.Vertical, 5)
 
-    local row = new("TextButton", {
+    local line = new("Frame", {
         Parent                 = outer,
         Size                   = UDim2.new(1, 0, 0, 36),
+        BackgroundTransparency = 1,
+    })
+
+    local row = new("TextButton", {
+        Parent                 = line,
+        Size                   = settingsSpec and UDim2.new(1, -36, 1, 0) or UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         BorderSizePixel        = 0,
         Text                   = "",
@@ -2726,16 +2754,17 @@ function Section:AddToggle(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.Text,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "Text")
     end
 
-    local rightSpace = settingsSpec and 86 or 54
+    local rightSpace = 54
     local label = new("TextLabel", {
         Parent                 = row,
         BackgroundTransparency = 1,
-        Size                   = UDim2.new(1, hasIcon and -(rightSpace + 24) or -rightSpace, 1, 0),
-        Position               = hasIcon and UDim2.new(0, 24, 0, 0) or UDim2.new(0, 0, 0, 0),
+        Size                   = UDim2.new(1, hasIcon and -(rightSpace + 30) or -rightSpace, 1, 0),
+        Position               = hasIcon and UDim2.new(0, 30, 0, 0) or UDim2.new(0, 0, 0, 0),
         Font                   = FONT_M,
         TextSize               = TEXT_MD,
         TextColor3             = Theme.Text,
@@ -2827,7 +2856,7 @@ function Section:AddToggle(opts)
 
     local settingsSection
     if settingsSpec then
-        local settingsBtn = makeSettingsButton(row, -42)
+        local settingsBtn = makeSettingsButton(line, 0)
         settingsBtn.MouseButton1Click:Connect(function()
             if not settingsSection then
                 local panelOpts = normalizePanelSpec(settingsSpec, text .. " settings")
@@ -2886,11 +2915,12 @@ function Section:AddSlider(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.SubText,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "SubText")
     end
 
-    local rightSpace = settingsSpec and 154 or 126
+    local rightSpace = settingsSpec and 142 or 116
     local label = new("TextLabel", {
         Parent                 = frame,
         BackgroundTransparency = 1,
@@ -2907,8 +2937,8 @@ function Section:AddSlider(opts)
         Parent                 = frame,
         BackgroundTransparency = 1,
         AnchorPoint            = Vector2.new(1, 0),
-        Position               = UDim2.new(1, -2, 0, 0),
-        Size                   = UDim2.fromOffset(116, 18),
+        Position               = settingsSpec and UDim2.new(1, -36, 0, 0) or UDim2.new(1, -2, 0, 0),
+        Size                   = UDim2.fromOffset(settingsSpec and 96 or 112, 18),
         Font                   = FONT_SB,
         TextSize               = TEXT_SM,
         TextColor3             = Theme.Text,
@@ -2918,9 +2948,9 @@ function Section:AddSlider(opts)
 
     local settingsSection
     if settingsSpec then
-        local settingsBtn = makeSettingsButton(frame, -124)
+        local settingsBtn = makeSettingsButton(frame, -2)
         settingsBtn.AnchorPoint = Vector2.new(1, 0)
-        settingsBtn.Position = UDim2.new(1, -124, 0, 0)
+        settingsBtn.Position = UDim2.new(1, -2, 0, 0)
         settingsBtn.MouseButton1Click:Connect(function()
             if not settingsSection then
                 local panelOpts = normalizePanelSpec(settingsSpec, text .. " settings")
@@ -2933,7 +2963,7 @@ function Section:AddSlider(opts)
     end
 
     local TRACK_Y = 34
-    local TRACK_H = 4
+    local TRACK_H = 6
     local track = new("Frame", {
         Parent           = frame,
         Position         = UDim2.new(0, 0, 0, TRACK_Y),
@@ -2956,7 +2986,7 @@ function Section:AddSlider(opts)
         Parent                 = frame,
         AnchorPoint            = Vector2.new(0.5, 0.5),
         Position               = UDim2.new(0, 0, 0, TRACK_Y + TRACK_H / 2),
-        Size                   = UDim2.fromOffset(34, 34),
+        Size                   = UDim2.fromOffset(26, 24),
         BackgroundColor3       = Theme.Accent,
         BackgroundTransparency = 1,
         BorderSizePixel        = 0,
@@ -2968,13 +2998,12 @@ function Section:AddSlider(opts)
         Parent           = frame,
         AnchorPoint      = Vector2.new(0.5, 0.5),
         Position         = UDim2.new(0, 0, 0, TRACK_Y + TRACK_H / 2),
-        Size             = UDim2.fromOffset(18, 18),
+        Size             = UDim2.fromOffset(6, 20),
         BackgroundColor3 = Theme.Accent,
         BorderSizePixel  = 0,
         ZIndex           = 3,
     })
     corner(thumb, R_PILL)
-    stroke(thumb, Theme.Bg, 2)
 
     local hitArea = new("TextButton", {
         Parent                 = frame,
@@ -3040,8 +3069,8 @@ function Section:AddSlider(opts)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            tween(halo, 0.12, { BackgroundTransparency = 0.84 })
-            tween(thumb, 0.12, { Size = UDim2.fromOffset(20, 20) })
+            tween(halo, 0.12, { BackgroundTransparency = 0.86 })
+            tween(thumb, 0.12, { Size = UDim2.fromOffset(8, 22) })
             updateFromInput(input)
         end
     end
@@ -3058,7 +3087,7 @@ function Section:AddSlider(opts)
         or input.UserInputType == Enum.UserInputType.Touch) then
             dragging = false
             tween(halo, 0.16, { BackgroundTransparency = 1 })
-            tween(thumb, 0.16, { Size = UDim2.fromOffset(18, 18) })
+            tween(thumb, 0.16, { Size = UDim2.fromOffset(6, 20) })
         end
     end))
 
@@ -3097,6 +3126,7 @@ function Section:AddDropdown(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.SubText,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "SubText")
     end
@@ -3632,6 +3662,7 @@ function Section:AddTextbox(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.SubText,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "SubText")
     end
@@ -3734,6 +3765,7 @@ function Section:AddKeybind(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.Text,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "Text")
     end
@@ -3741,8 +3773,8 @@ function Section:AddKeybind(opts)
     new("TextLabel", {
         Parent                 = row,
         BackgroundTransparency = 1,
-        Size                   = UDim2.new(1, hasIcon and -134 or -110, 1, 0),
-        Position               = hasIcon and UDim2.new(0, 24, 0, 0) or UDim2.new(0, 0, 0, 0),
+        Size                   = UDim2.new(1, hasIcon and -140 or -110, 1, 0),
+        Position               = hasIcon and UDim2.new(0, 30, 0, 0) or UDim2.new(0, 0, 0, 0),
         Font                   = FONT_M,
         TextSize               = TEXT_MD,
         TextColor3             = Theme.Text,
@@ -3929,6 +3961,7 @@ function Section:AddColorpicker(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = Theme.Text,
+            ScaleType           = Enum.ScaleType.Fit,
         })
         bindTheme(icon, "ImageColor3", "Text")
     end
@@ -3936,8 +3969,8 @@ function Section:AddColorpicker(opts)
     new("TextLabel", {
         Parent                 = row,
         BackgroundTransparency = 1,
-        Size                   = UDim2.new(1, hasIcon and -74 or -50, 1, 0),
-        Position               = hasIcon and UDim2.new(0, 24, 0, 0) or UDim2.new(0, 0, 0, 0),
+        Size                   = UDim2.new(1, hasIcon and -80 or -50, 1, 0),
+        Position               = hasIcon and UDim2.new(0, 30, 0, 0) or UDim2.new(0, 0, 0, 0),
         Font                   = FONT_M,
         TextSize               = TEXT_MD,
         TextColor3             = Theme.Text,
@@ -3957,6 +3990,7 @@ function Section:AddColorpicker(opts)
     })
     corner(swatch, R_PILL)
     local swStroke = stroke(swatch, Theme.BorderHi, 1)
+    swatch:SetAttribute("ObsPreserve", true)
 
     local POP_W   = 240
     local headerH = 30
@@ -4056,6 +4090,7 @@ function Section:AddColorpicker(opts)
     })
     corner(preview, R_MD)
     stroke(preview, Theme.BorderHi, 1)
+    preview:SetAttribute("ObsPreserve", true)
     nextY = nextY + previewH + gap
 
     local hueBar = new("Frame", {
@@ -4176,6 +4211,8 @@ function Section:AddColorpicker(opts)
     local h, l = colorToHL(default)
     local alpha = 1
     local userMoved = false
+    local lastCallbackAt = 0
+    local callbackQueued = false
     local api = {}
 
     makeDraggable(popup, header, function() userMoved = true end)
@@ -4203,12 +4240,29 @@ function Section:AddColorpicker(opts)
         if not hex:IsFocused() then hex.Text = rgbToHex(c) end
     end
 
+    local function fireCallbackThrottled()
+        local now = os.clock()
+        local delayLeft = (1 / 45) - (now - lastCallbackAt)
+        if delayLeft <= 0 then
+            lastCallbackAt = now
+            task.spawn(callback, color(), alpha)
+            return
+        end
+        if callbackQueued then return end
+        callbackQueued = true
+        task.delay(delayLeft, function()
+            callbackQueued = false
+            lastCallbackAt = os.clock()
+            task.spawn(callback, color(), alpha)
+        end)
+    end
+
     function api:Set(c, a, silent)
         if c then h, l = colorToHL(c) end
         if a ~= nil then alpha = clamp(a, 0, 1) end
         render()
         if flag then Library:SetFlag(flag, color()) end
-        if not silent then task.spawn(callback, color(), alpha) end
+        if not silent then fireCallbackThrottled() end
     end
     function api:Get() return color(), alpha end
 
@@ -4422,6 +4476,7 @@ function Library:Notify(opts)
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
             ImageColor3         = barColor,
+            ScaleType           = Enum.ScaleType.Fit,
             ZIndex              = 5004,
         })
     else
