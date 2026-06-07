@@ -5,7 +5,7 @@ Library.FlagCallbacks      = {}
 Library.Connections        = {}
 Library.Windows            = {}
 Library.Open               = true
-Library.Version            = "4.1.1"
+Library.Version            = "4.1.2"
 Library.Name               = "Obscura"
 Library._activeDropdown    = nil
 Library._activeColorpicker = nil
@@ -241,10 +241,42 @@ end
 
 function Library:SetAccent(color, instant)
     if typeof(color) ~= "Color3" then return end
-    Theme.Accent = color
+    local oldAccent = Theme.Accent
     local current = self.Themes[self.CurrentTheme]
     if current then current.Accent = color end
-    self:SetTheme(self.CurrentTheme or "light", instant ~= false)
+    Theme.Accent = color
+
+    local sg = self.ScreenGui
+    if not sg then return end
+
+    local dur = instant and 0 or 0.16
+    local function apply(inst, prop)
+        local shouldApply = inst:GetAttribute("ObsT_" .. prop) == "Accent"
+        if not shouldApply then
+            local ok, currentValue = pcall(function() return inst[prop] end)
+            shouldApply = ok and typeof(currentValue) == "Color3" and colorEq(currentValue, oldAccent)
+        end
+        if shouldApply then
+            if dur <= 0 then
+                pcall(function() inst[prop] = color end)
+            else
+                _themeTween(inst, prop, color, dur)
+            end
+            pcall(function() inst:SetAttribute("ObsT_" .. prop, "Accent") end)
+        end
+    end
+
+    local instances = sg:GetDescendants()
+    for _, inst in ipairs(instances) do
+        if not inst:GetAttribute("ObsPreserve") then
+            local props = _PROPS_BY_CLASS[inst.ClassName]
+            if props then
+                for _, prop in ipairs(props) do
+                    apply(inst, prop)
+                end
+            end
+        end
+    end
 end
 
 local FONT, FONT_M, FONT_SB, FONT_B =
@@ -579,6 +611,70 @@ local function drawHamburger(parent, size, color)
         corner(bar, UDim.new(0, 1))
     end
     return { Container = cont }
+end
+
+local function drawSettingsGlyph(parent, size, color)
+    local cont = new("Frame", {
+        Parent                 = parent,
+        AnchorPoint            = Vector2.new(0.5, 0.5),
+        Position               = UDim2.fromScale(0.5, 0.5),
+        Size                   = UDim2.fromOffset(size, size),
+        BackgroundTransparency = 1,
+        ZIndex                 = 21,
+    })
+
+    local parts = {}
+    local lineLen = math.floor(size * 0.72 + 0.5)
+    local lineH = math.max(2, math.floor(size * 0.12 + 0.5))
+    local knob = math.max(4, math.floor(size * 0.25 + 0.5))
+    local center = math.floor(size * 0.5 + 0.5)
+    local ys = {
+        math.floor(size * 0.28 + 0.5),
+        center,
+        math.floor(size * 0.72 + 0.5),
+    }
+    local xs = {
+        math.floor(size * 0.32 + 0.5),
+        math.floor(size * 0.68 + 0.5),
+        math.floor(size * 0.48 + 0.5),
+    }
+
+    for i = 1, 3 do
+        local line = new("Frame", {
+            Parent           = cont,
+            AnchorPoint      = Vector2.new(0.5, 0.5),
+            Position         = UDim2.fromOffset(center, ys[i]),
+            Size             = UDim2.fromOffset(lineLen, lineH),
+            BackgroundColor3 = color,
+            BorderSizePixel  = 0,
+            ZIndex           = 21,
+        })
+        corner(line, R_PILL)
+        table.insert(parts, line)
+
+        local dot = new("Frame", {
+            Parent           = cont,
+            AnchorPoint      = Vector2.new(0.5, 0.5),
+            Position         = UDim2.fromOffset(xs[i], ys[i]),
+            Size             = UDim2.fromOffset(knob, knob),
+            BackgroundColor3 = color,
+            BorderSizePixel  = 0,
+            ZIndex           = 22,
+        })
+        corner(dot, R_PILL)
+        table.insert(parts, dot)
+    end
+
+    local api = { Container = cont, Parts = parts }
+    function api:SetColor(c, themeKey)
+        for _, part in ipairs(parts) do
+            part.BackgroundColor3 = c
+            if themeKey then
+                pcall(function() part:SetAttribute("ObsT_BackgroundColor3", themeKey) end)
+            end
+        end
+    end
+    return api
 end
 
 local function makeDraggable(target, handle, onDragStart)
@@ -2316,50 +2412,17 @@ local function makeSettingsButton(parent, xOffset)
     corner(btn, R_PILL)
     local btnStroke = stroke(btn, Theme.Border, 1)
 
-    local iconImage, iconOffset, iconSize = getIcon("settings")
-    local icon
-    if iconImage then
-        icon = new("ImageLabel", {
-            Parent                 = btn,
-            AnchorPoint            = Vector2.new(0.5, 0.5),
-            Position               = UDim2.fromScale(0.5, 0.5),
-            Size                   = UDim2.fromOffset(16, 16),
-            BackgroundTransparency = 1,
-            Image                  = iconImage,
-            ImageRectOffset        = iconOffset,
-            ImageRectSize          = iconSize,
-            ImageColor3            = Theme.SubText,
-            ScaleType              = Enum.ScaleType.Fit,
-            ZIndex                 = 21,
-        })
-        bindTheme(icon, "ImageColor3", "SubText")
-    else
-        local holder = new("Frame", {
-            Parent                 = btn,
-            AnchorPoint            = Vector2.new(0.5, 0.5),
-            Position               = UDim2.fromScale(0.5, 0.5),
-            Size                   = UDim2.fromOffset(16, 16),
-            BackgroundTransparency = 1,
-            ZIndex                 = 21,
-        })
-        icon = drawHamburger(holder, 16, Theme.SubText)
-    end
+    local icon = drawSettingsGlyph(btn, 16, Theme.SubText)
 
     btn.MouseEnter:Connect(function()
         tween(btn, 0.14, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Bg3 })
         tween(btnStroke, 0.14, { Color = Theme.BorderHi })
-        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then
-            tween(icon, 0.14, { ImageColor3 = Theme.Text, Rotation = 18 })
-        end
-        if icon and icon.SetColor then icon:SetColor(Theme.Text) end
+        icon:SetColor(Theme.Text, "Text")
     end)
     btn.MouseLeave:Connect(function()
         tween(btn, 0.14, { BackgroundTransparency = 0.35, BackgroundColor3 = Theme.Bg2 })
         tween(btnStroke, 0.14, { Color = Theme.Border })
-        if typeof(icon) == "Instance" and icon:IsA("ImageLabel") then
-            tween(icon, 0.14, { ImageColor3 = Theme.SubText, Rotation = 0 })
-        end
-        if icon and icon.SetColor then icon:SetColor(Theme.SubText) end
+        icon:SetColor(Theme.SubText, "SubText")
     end)
     return btn
 end
@@ -2519,8 +2582,9 @@ function Section:AddLabel(text, iconName)
         local icon = new("ImageLabel", {
             Parent              = container,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 16, 0, 16),
-            Position            = UDim2.fromOffset(0, 1),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(16, 16),
+            Position            = UDim2.fromOffset(0, 9),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -2644,8 +2708,9 @@ function Section:AddButton(opts)
         local icon = new("ImageLabel", {
             Parent              = btn,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 18, 0, 18),
-            Position            = UDim2.new(0, 10, 0.5, -9),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(18, 18),
+            Position            = UDim2.new(0, 10, 0.5, 0),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -2748,8 +2813,9 @@ function Section:AddToggle(opts)
         local icon = new("ImageLabel", {
             Parent              = row,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 18, 0, 18),
-            Position            = UDim2.new(0, 6, 0.5, -9),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(18, 18),
+            Position            = UDim2.new(0, 6, 0.5, 0),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -2909,8 +2975,9 @@ function Section:AddSlider(opts)
         local icon = new("ImageLabel", {
             Parent              = frame,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 16, 0, 16),
-            Position            = UDim2.fromOffset(2, 1),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(16, 16),
+            Position            = UDim2.fromOffset(2, 9),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -3120,8 +3187,9 @@ function Section:AddDropdown(opts)
         local icon = new("ImageLabel", {
             Parent              = frame,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 14, 0, 14),
-            Position            = UDim2.fromOffset(2, 1),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(16, 16),
+            Position            = UDim2.fromOffset(2, 8),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -3135,7 +3203,7 @@ function Section:AddDropdown(opts)
         Parent                 = frame,
         BackgroundTransparency = 1,
         Position               = hasIcon and UDim2.fromOffset(20, 0) or UDim2.fromOffset(2, 0),
-        Size                   = UDim2.new(1, hasIcon and -18 or 0, 0, 16),
+        Size                   = UDim2.new(1, hasIcon and -22 or -4, 0, 16),
         Font                   = FONT_M,
         TextSize               = TEXT_SM,
         TextColor3             = Theme.SubText,
@@ -3656,8 +3724,9 @@ function Section:AddTextbox(opts)
         local icon = new("ImageLabel", {
             Parent              = frame,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 14, 0, 14),
-            Position            = UDim2.fromOffset(2, 1),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(16, 16),
+            Position            = UDim2.fromOffset(2, 8),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -3671,7 +3740,7 @@ function Section:AddTextbox(opts)
         Parent                 = frame,
         BackgroundTransparency = 1,
         Position               = hasIcon and UDim2.fromOffset(20, 0) or UDim2.fromOffset(2, 0),
-        Size                   = UDim2.new(1, hasIcon and -18 or 0, 0, 16),
+        Size                   = UDim2.new(1, hasIcon and -22 or -4, 0, 16),
         Font                   = FONT_M,
         TextSize               = TEXT_SM,
         TextColor3             = Theme.SubText,
@@ -3759,8 +3828,9 @@ function Section:AddKeybind(opts)
         local icon = new("ImageLabel", {
             Parent              = row,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 18, 0, 18),
-            Position            = UDim2.new(0, 6, 0.5, -9),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(18, 18),
+            Position            = UDim2.new(0, 6, 0.5, 0),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
@@ -3955,8 +4025,9 @@ function Section:AddColorpicker(opts)
         local icon = new("ImageLabel", {
             Parent              = row,
             BackgroundTransparency = 1,
-            Size                = UDim2.new(0, 18, 0, 18),
-            Position            = UDim2.new(0, 6, 0.5, -9),
+            AnchorPoint         = Vector2.new(0, 0.5),
+            Size                = UDim2.fromOffset(18, 18),
+            Position            = UDim2.new(0, 6, 0.5, 0),
             Image               = iconImage,
             ImageRectOffset     = iconOffset,
             ImageRectSize       = iconSize,
