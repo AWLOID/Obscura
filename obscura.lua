@@ -1539,6 +1539,7 @@ function Library:CreateWindow(opts)
     local wmEnabled = opts.Watermark ~= false
     local wmOpts = opts.Watermark or {}
     if type(wmOpts) == "string" then wmOpts = { Name = wmOpts } end
+    if type(wmOpts) ~= "table" then wmOpts = {} end
     if type(wmOpts) == "table" and wmOpts.Enabled == false then wmEnabled = false end
     local wmName = wmOpts.Name or ""
     local wmShowFPS     = wmOpts.FPS ~= false
