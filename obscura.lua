@@ -2266,6 +2266,10 @@ end
 local Tab = {}
 Tab.__index = Tab
 
+function Window:Notify(opts)
+    return Library:Notify(opts)
+end
+
 function Window:CreateTab(name, iconAsset)
     name = tostring(name or "Tab")
     local vertical = self.VerticalTabs
@@ -4925,7 +4929,7 @@ function Tab:CreateSubTabs(opts)
         local btn = new("TextButton", {
             Parent                 = bar,
             Name                   = name,
-            ALibraryoButtonColor        = false,
+            AutoButtonColor        = false,
             BackgroundTransparency = 1,
             Text                   = "",
             Size                   = UDim2.new(0, 0, 1, 0),
