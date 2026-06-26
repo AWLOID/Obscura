@@ -201,7 +201,7 @@ function Library:SetTheme(name, instant)
         local current
         local ok = pcall(function() current = inst[prop] end)
         if ok and current and typeof(current) == "Color3" then
-            -- Try exact match against old theme first
+
             for k, oldC in pairs(old) do
                 if colorEq(current, oldC) then
                     setOrTween(inst, prop, target[k])
@@ -209,7 +209,7 @@ function Library:SetTheme(name, instant)
                     return
                 end
             end
-            -- Fallback: broader fuzzy match (threshold 0.35)
+
             local bestKey, bestDist = nil, 0.35
             for k, oldC in pairs(old) do
                 local d = colorDist(current, oldC)
@@ -1281,7 +1281,6 @@ local function attachHover(btn, normal, hover, strokeInst)
     end)
 end
 
--- Key System
 function Library:CreateKeySystem(opts)
     opts = opts or {}
     local keyTitle    = opts.Title or "Key System"
@@ -1433,7 +1432,6 @@ function Library:CreateKeySystem(opts)
         stroke(getKeyBtn, Theme.BorderHi, 1)
     end
 
-    -- Try saved key
     if savedKey then
         pcall(function()
             local saved = readfile(keyFileName)
@@ -1501,7 +1499,6 @@ function Library:CreateKeySystem(opts)
     function api:IsResolved() return resolved end
     function api:Destroy() if overlay and overlay.Parent then overlay:Destroy() end end
 
-    -- Block until key is accepted
     while not resolved do task.wait(0.1) end
     return api
 end
@@ -1535,7 +1532,6 @@ function Library:CreateWindow(opts)
 
     local sg = getScreenGui()
 
-    -- Watermark (top-right, styled frame with live stats)
     local wmEnabled = opts.Watermark ~= false
     local wmOpts = opts.Watermark or {}
     if type(wmOpts) == "string" then wmOpts = { Name = wmOpts } end
@@ -1628,7 +1624,6 @@ function Library:CreateWindow(opts)
             wmLabels.time = wmLabel("00:00", "SubText")
         end
 
-        -- Live update loop
         local fpsAccum, fpsCount = 0, 0
         register(RS.Heartbeat:Connect(function(dt)
             if not wmFrame or not wmFrame.Parent then return end
@@ -1897,7 +1892,6 @@ function Library:CreateWindow(opts)
 
     if mobile then makeMobileButton() end
 
-    -- Search bar
     local searchBox = new("TextBox", {
         Parent                 = titleBar,
         AnchorPoint            = Vector2.new(1, 0.5),
@@ -2230,7 +2224,7 @@ function Window:_filterElements(query)
                 end
             end
         end
-        -- Show all tabs when searching, hide if no results
+
         if query ~= "" then
             tab.Page.Visible = true
         end
@@ -4529,7 +4523,6 @@ function Library:Notify(opts)
 
     local contentPadLeft = 48
 
-    -- Icon support
     local hasIcon = iconName and type(iconName) == "string"
     local iconImage, iconOffset, iconSize
     if hasIcon then
@@ -4575,7 +4568,6 @@ function Library:Notify(opts)
     pad(content, contentPadLeft, 10, 12, 12)
     listLayout(content, Enum.FillDirection.Vertical, 2)
 
-    -- Click-to-dismiss
     local dismissBtn = new("TextButton", {
         Parent                 = card,
         Size                   = UDim2.fromScale(1, 1),
@@ -4717,9 +4709,6 @@ function Library:Notify(opts)
     return card
 end
 
-----------------------------------------------------------------
--- KEY SYSTEM (built-in, styled to match menu theme)
-----------------------------------------------------------------
 function Library:CreateKeySystem(cfg)
     cfg = cfg or {}
     local title    = cfg.Title or self.Name
@@ -4844,21 +4833,9 @@ function Library:CreateKeySystem(cfg)
     return true
 end
 
-
--- ============================================================
---  OBSCURA EXTENSION PACK  (sub-tabs, new elements, animations)
---  Appended additively — uses existing upvalue helpers.
--- ============================================================
-
--- Smooth, reusable tween presets
 local EASE_OUT = Enum.EasingStyle.Quint
 local EASE_BACK = Enum.EasingStyle.Back
 
-----------------------------------------------------------------
--- Tab:CreateSubTabs(opts)  ->  mini-tab switcher inside a tab
---   opts.Align = "Left"|"Center"|"Stretch" (default "Stretch")
---   returns container with :CreateTab(name, icon) -> sub-tab (has :CreateSection)
-----------------------------------------------------------------
 function Tab:CreateSubTabs(opts)
     opts = opts or {}
     local align = opts.Align or "Stretch"
@@ -4872,7 +4849,6 @@ function Tab:CreateSubTabs(opts)
     })
     listLayout(wrapper, Enum.FillDirection.Vertical, 10)
 
-    -- the mini-tab bar (pill container)
     local bar = new("Frame", {
         Parent           = wrapper,
         Name             = "Bar",
@@ -4888,7 +4864,6 @@ function Tab:CreateSubTabs(opts)
         align == "Left" and Enum.HorizontalAlignment.Left or Enum.HorizontalAlignment.Center)
     barLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-    -- sliding highlight pill behind active button
     local indicator = new("Frame", {
         Parent           = bar,
         Name             = "Indicator",
@@ -4901,7 +4876,6 @@ function Tab:CreateSubTabs(opts)
     bindTheme(indicator, "BackgroundColor3", "Accent")
     corner(indicator, R_SM)
 
-    -- holder for the sub-pages
     local holder = new("Frame", {
         Parent                 = wrapper,
         Name                   = "Holder",
@@ -4951,7 +4925,7 @@ function Tab:CreateSubTabs(opts)
         local btn = new("TextButton", {
             Parent                 = bar,
             Name                   = name,
-            AutoButtonColor        = false,
+            ALibraryoButtonColor        = false,
             BackgroundTransparency = 1,
             Text                   = "",
             Size                   = UDim2.new(0, 0, 1, 0),
@@ -4979,7 +4953,6 @@ function Tab:CreateSubTabs(opts)
         })
         listLayout(page, Enum.FillDirection.Vertical, 12)
 
-        -- sub-tab object inherits all Tab methods (CreateSection, etc.)
         local subtab = setmetatable({
             Window   = self.Window or (Tab.Window),
             Name     = name,
@@ -5005,7 +4978,6 @@ function Tab:CreateSubTabs(opts)
         return subtab
     end
 
-    -- keep indicator aligned if window resizes
     bar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
         if sub.Active then sub:_moveIndicator(sub.Active.Button, false) end
     end)
@@ -5014,9 +4986,6 @@ function Tab:CreateSubTabs(opts)
     return sub
 end
 
-----------------------------------------------------------------
--- Section:AddProgressBar(opts)
-----------------------------------------------------------------
 function Section:AddProgressBar(opts)
     opts = opts or {}
     local value = math.clamp(tonumber(opts.Value) or 0, 0, 1)
@@ -5065,9 +5034,6 @@ function Section:AddProgressBar(opts)
     return api
 end
 
-----------------------------------------------------------------
--- Section:AddImage(opts)
-----------------------------------------------------------------
 function Section:AddImage(opts)
     opts = opts or {}
     local holder = new("Frame", {
@@ -5094,10 +5060,6 @@ function Section:AddImage(opts)
     return api
 end
 
-----------------------------------------------------------------
--- Section:AddButtonGroup(opts)  -> segmented buttons
---   opts.Options = {"A","B","C"}; opts.Callback = function(value)
-----------------------------------------------------------------
 function Section:AddButtonGroup(opts)
     opts = opts or {}
     local options  = opts.Options or {}
@@ -5173,9 +5135,6 @@ function Section:AddButtonGroup(opts)
     return api
 end
 
-----------------------------------------------------------------
--- Section:AddStepper(opts)  -> -  value  +
-----------------------------------------------------------------
 function Section:AddStepper(opts)
     opts = opts or {}
     local min  = opts.Min or 0
@@ -5246,6 +5205,5 @@ function Section:AddStepper(opts)
     function api:Set(v) set(v) end
     return api
 end
-
 
 return Library
