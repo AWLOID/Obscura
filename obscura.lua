@@ -4843,4 +4843,408 @@ function Library:CreateKeySystem(cfg)
     return true
 end
 
+
+-- ============================================================
+--  OBSCURA EXTENSION PACK  (sub-tabs, new elements, animations)
+--  Appended additively — uses existing upvalue helpers.
+-- ============================================================
+
+-- Smooth, reusable tween presets
+local EASE_OUT = Enum.EasingStyle.Quint
+local EASE_BACK = Enum.EasingStyle.Back
+
+----------------------------------------------------------------
+-- Tab:CreateSubTabs(opts)  ->  mini-tab switcher inside a tab
+--   opts.Align = "Left"|"Center"|"Stretch" (default "Stretch")
+--   returns container with :CreateTab(name, icon) -> sub-tab (has :CreateSection)
+----------------------------------------------------------------
+function Tab:CreateSubTabs(opts)
+    opts = opts or {}
+    local align = opts.Align or "Stretch"
+
+    local wrapper = new("Frame", {
+        Parent                 = self.Page,
+        Name                   = "SubTabs",
+        Size                   = UDim2.new(1, 0, 0, 0),
+        AutomaticSize          = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    })
+    listLayout(wrapper, Enum.FillDirection.Vertical, 10)
+
+    -- the mini-tab bar (pill container)
+    local bar = new("Frame", {
+        Parent           = wrapper,
+        Name             = "Bar",
+        Size             = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = Theme.Bg2,
+    })
+    bindTheme(bar, "BackgroundColor3", "Bg2")
+    corner(bar, R_MD)
+    stroke(bar, Theme.Border, 1)
+    pad(bar, 4, 4, 4, 4)
+
+    local barLayout = listLayout(bar, Enum.FillDirection.Horizontal, 4,
+        align == "Left" and Enum.HorizontalAlignment.Left or Enum.HorizontalAlignment.Center)
+    barLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+    -- sliding highlight pill behind active button
+    local indicator = new("Frame", {
+        Parent           = bar,
+        Name             = "Indicator",
+        BackgroundColor3 = Theme.Accent,
+        Size             = UDim2.new(0, 0, 1, 0),
+        Position         = UDim2.new(0, 0, 0, 0),
+        ZIndex           = 1,
+        Visible          = false,
+    })
+    bindTheme(indicator, "BackgroundColor3", "Accent")
+    corner(indicator, R_SM)
+
+    -- holder for the sub-pages
+    local holder = new("Frame", {
+        Parent                 = wrapper,
+        Name                   = "Holder",
+        Size                   = UDim2.new(1, 0, 0, 0),
+        AutomaticSize          = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    })
+
+    local sub = { Tabs = {}, Active = nil, Bar = bar, Holder = holder, Wrapper = wrapper }
+
+    function sub:_moveIndicator(btn, animate)
+        if not btn then return end
+        local relX = btn.AbsolutePosition.X - bar.AbsolutePosition.X
+        local goalPos  = UDim2.new(0, relX, 0, 0)
+        local goalSize = UDim2.new(0, btn.AbsoluteSize.X, 1, 0)
+        indicator.Visible = true
+        if animate == false then
+            indicator.Position = goalPos
+            indicator.Size     = goalSize
+        else
+            tween(indicator, 0.32, { Position = goalPos, Size = goalSize }, EASE_OUT)
+        end
+    end
+
+    function sub:Select(target, animate)
+        if self.Active == target then return end
+        for _, t in ipairs(self.Tabs) do
+            local on = (t == target)
+            if on then
+                t.Page.Visible = true
+                t.Label.TextColor3 = Theme.AccentText
+                t.Page.Position = UDim2.new(0, 0, 0, 8)
+                t.Page.BackgroundTransparency = 1
+                tween(t.Page, 0.28, { Position = UDim2.new(0, 0, 0, 0) }, EASE_OUT)
+                self:_moveIndicator(t.Button, animate)
+            else
+                t.Page.Visible = false
+                t.Label.TextColor3 = Theme.SubText
+            end
+        end
+        self.Active = target
+    end
+
+    function sub:CreateTab(name, icon)
+        name = tostring(name or "Sub")
+
+        local btn = new("TextButton", {
+            Parent                 = bar,
+            Name                   = name,
+            AutoButtonColor        = false,
+            BackgroundTransparency = 1,
+            Text                   = "",
+            Size                   = UDim2.new(0, 0, 1, 0),
+            AutomaticSize          = Enum.AutomaticSize.X,
+            ZIndex                 = 2,
+        })
+        local label = new("TextLabel", {
+            Parent                 = btn,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, 0, 1, 0),
+            Font                   = FONT_SB,
+            TextSize               = TEXT_SM,
+            Text                   = "   " .. name .. "   ",
+            TextColor3             = Theme.SubText,
+            ZIndex                 = 3,
+        })
+
+        local page = new("Frame", {
+            Parent                 = holder,
+            Name                   = name .. "_Page",
+            Size                   = UDim2.new(1, 0, 0, 0),
+            AutomaticSize          = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Visible                = false,
+        })
+        listLayout(page, Enum.FillDirection.Vertical, 12)
+
+        -- sub-tab object inherits all Tab methods (CreateSection, etc.)
+        local subtab = setmetatable({
+            Window   = self.Window or (Tab.Window),
+            Name     = name,
+            Page     = page,
+            Sections = {},
+        }, Tab)
+        subtab.Window = self.Window
+
+        local entry = { Button = btn, Label = label, Page = page, Tab = subtab }
+        table.insert(self.Tabs, entry)
+
+        btn.MouseEnter:Connect(function()
+            if self.Active ~= entry then tween(label, 0.14, { TextColor3 = Theme.Text }) end
+        end)
+        btn.MouseLeave:Connect(function()
+            if self.Active ~= entry then tween(label, 0.14, { TextColor3 = Theme.SubText }) end
+        end)
+        btn.MouseButton1Click:Connect(function() self:Select(entry, true) end)
+
+        if #self.Tabs == 1 then
+            task.defer(function() self:Select(entry, false) end)
+        end
+        return subtab
+    end
+
+    -- keep indicator aligned if window resizes
+    bar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        if sub.Active then sub:_moveIndicator(sub.Active.Button, false) end
+    end)
+
+    sub.Window = self.Window
+    return sub
+end
+
+----------------------------------------------------------------
+-- Section:AddProgressBar(opts)
+----------------------------------------------------------------
+function Section:AddProgressBar(opts)
+    opts = opts or {}
+    local value = math.clamp(tonumber(opts.Value) or 0, 0, 1)
+
+    local frame = new("Frame", {
+        Parent                 = self.Content,
+        Size                   = UDim2.new(1, 0, 0, 44),
+        BackgroundTransparency = 1,
+    })
+    new("TextLabel", {
+        Parent                 = frame,
+        BackgroundTransparency = 1,
+        Position               = UDim2.new(0, 0, 0, 0),
+        Size                   = UDim2.new(1, 0, 0, 18),
+        Font                   = FONT_M,
+        TextSize               = TEXT_SM,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        Text                   = opts.Text or "Progress",
+        TextColor3             = Theme.Text,
+    })
+    local track = new("Frame", {
+        Parent           = frame,
+        Position         = UDim2.new(0, 0, 0, 26),
+        Size             = UDim2.new(1, 0, 0, 10),
+        BackgroundColor3 = Theme.Track,
+    })
+    bindTheme(track, "BackgroundColor3", "Track")
+    corner(track, R_SM)
+    local fill = new("Frame", {
+        Parent           = track,
+        Size             = UDim2.new(value, 0, 1, 0),
+        BackgroundColor3 = Theme.Accent,
+    })
+    bindTheme(fill, "BackgroundColor3", "Accent")
+    corner(fill, R_SM)
+
+    local api = {}
+    function api:Set(v, animate)
+        v = math.clamp(tonumber(v) or 0, 0, 1)
+        if animate == false then
+            fill.Size = UDim2.new(v, 0, 1, 0)
+        else
+            tween(fill, 0.3, { Size = UDim2.new(v, 0, 1, 0) }, EASE_OUT)
+        end
+    end
+    return api
+end
+
+----------------------------------------------------------------
+-- Section:AddImage(opts)
+----------------------------------------------------------------
+function Section:AddImage(opts)
+    opts = opts or {}
+    local holder = new("Frame", {
+        Parent                 = self.Content,
+        Size                   = UDim2.new(1, 0, 0, opts.Height or 120),
+        BackgroundColor3       = Theme.Bg2,
+    })
+    bindTheme(holder, "BackgroundColor3", "Bg2")
+    corner(holder, R_MD)
+    stroke(holder, Theme.Border, 1)
+    local img = new("ImageLabel", {
+        Parent                 = holder,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -8, 1, -8),
+        Position               = UDim2.new(0, 4, 0, 4),
+        Image                  = opts.Image or "",
+        ScaleType              = opts.ScaleType or Enum.ScaleType.Fit,
+        ImageTransparency      = 1,
+    })
+    corner(img, R_SM)
+    tween(img, 0.35, { ImageTransparency = 0 })
+    local api = {}
+    function api:Set(id) img.Image = id end
+    return api
+end
+
+----------------------------------------------------------------
+-- Section:AddButtonGroup(opts)  -> segmented buttons
+--   opts.Options = {"A","B","C"}; opts.Callback = function(value)
+----------------------------------------------------------------
+function Section:AddButtonGroup(opts)
+    opts = opts or {}
+    local options  = opts.Options or {}
+    local callback = opts.Callback or function() end
+
+    local frame = new("Frame", {
+        Parent           = self.Content,
+        Size             = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = Theme.Bg2,
+    })
+    bindTheme(frame, "BackgroundColor3", "Bg2")
+    corner(frame, R_MD)
+    stroke(frame, Theme.Border, 1)
+    pad(frame, 3, 3, 3, 3)
+    local lay = listLayout(frame, Enum.FillDirection.Horizontal, 3)
+    lay.VerticalAlignment = Enum.VerticalAlignment.Center
+    lay.HorizontalFlex = Enum.UIFlexAlignment.Fill
+
+    local current
+    local buttons = {}
+    local function refresh(sel)
+        current = sel
+        for opt, b in pairs(buttons) do
+            local on = (opt == sel)
+            tween(b.bg, 0.18, { BackgroundTransparency = on and 0 or 1 })
+            tween(b.lbl, 0.18, { TextColor3 = on and Theme.AccentText or Theme.SubText })
+        end
+    end
+
+    for _, opt in ipairs(options) do
+        local b = new("TextButton", {
+            Parent                 = frame,
+            AutoButtonColor        = false,
+            BackgroundTransparency = 1,
+            Text                   = "",
+            Size                   = UDim2.new(0, 60, 1, 0),
+        })
+        local flex = Instance.new("UIFlexItem"); flex.FlexMode = Enum.UIFlexMode.Fill; flex.Parent = b
+        local bg = new("Frame", {
+            Parent                 = b,
+            Size                   = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3       = Theme.Accent,
+            BackgroundTransparency = 1,
+        })
+        bindTheme(bg, "BackgroundColor3", "Accent")
+        corner(bg, R_SM)
+        local lbl = new("TextLabel", {
+            Parent                 = b,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, 0, 1, 0),
+            Font                   = FONT_SB,
+            TextSize               = TEXT_SM,
+            Text                   = tostring(opt),
+            TextColor3             = Theme.SubText,
+            ZIndex                 = 2,
+        })
+        buttons[opt] = { bg = bg, lbl = lbl }
+        b.MouseButton1Click:Connect(function()
+            refresh(opt)
+            callback(opt)
+        end)
+    end
+
+    if opts.Default and buttons[opts.Default] then
+        refresh(opts.Default)
+    elseif options[1] then
+        refresh(options[1])
+    end
+
+    local api = {}
+    function api:Get() return current end
+    function api:Set(v) if buttons[v] then refresh(v); callback(v) end end
+    return api
+end
+
+----------------------------------------------------------------
+-- Section:AddStepper(opts)  -> -  value  +
+----------------------------------------------------------------
+function Section:AddStepper(opts)
+    opts = opts or {}
+    local min  = opts.Min or 0
+    local max  = opts.Max or 100
+    local step = opts.Step or 1
+    local val  = math.clamp(opts.Default or min, min, max)
+    local callback = opts.Callback or function() end
+
+    local frame = new("Frame", {
+        Parent                 = self.Content,
+        Size                   = UDim2.new(1, 0, 0, 34),
+        BackgroundTransparency = 1,
+    })
+    new("TextLabel", {
+        Parent                 = frame,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -120, 1, 0),
+        Font                   = FONT_M,
+        TextSize               = TEXT_SM,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        Text                   = opts.Text or "Value",
+        TextColor3             = Theme.Text,
+    })
+
+    local function makeBtn(sym, xoff)
+        local b = new("TextButton", {
+            Parent           = frame,
+            AnchorPoint      = Vector2.new(1, 0.5),
+            Position         = UDim2.new(1, xoff, 0.5, 0),
+            Size             = UDim2.new(0, 30, 0, 28),
+            BackgroundColor3 = Theme.Bg2,
+            AutoButtonColor  = false,
+            Font             = FONT_B,
+            TextSize         = TEXT_MD,
+            Text             = sym,
+            TextColor3       = Theme.Text,
+        })
+        bindTheme(b, "BackgroundColor3", "Bg2")
+        corner(b, R_SM); stroke(b, Theme.Border, 1)
+        b.MouseEnter:Connect(function() tween(b, 0.14, { BackgroundColor3 = Theme.Hover }) end)
+        b.MouseLeave:Connect(function() tween(b, 0.14, { BackgroundColor3 = Theme.Bg2 }) end)
+        return b
+    end
+    local plus  = makeBtn("+", 0)
+    local disp  = new("TextLabel", {
+        Parent                 = frame,
+        AnchorPoint            = Vector2.new(1, 0.5),
+        Position               = UDim2.new(1, -38, 0.5, 0),
+        Size                   = UDim2.new(0, 44, 0, 28),
+        BackgroundTransparency = 1,
+        Font                   = FONT_SB,
+        TextSize               = TEXT_SM,
+        Text                   = tostring(val),
+        TextColor3             = Theme.Text,
+    })
+    local minus = makeBtn("-", -82)
+
+    local function set(v)
+        val = math.clamp(v, min, max)
+        disp.Text = tostring(val)
+        callback(val)
+    end
+    plus.MouseButton1Click:Connect(function() set(val + step) end)
+    minus.MouseButton1Click:Connect(function() set(val - step) end)
+
+    local api = {}
+    function api:Get() return val end
+    function api:Set(v) set(v) end
+    return api
+end
+
+
 return Library
