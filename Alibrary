@@ -1,53 +1,3 @@
---[[
-    ============================================================
-    Lurk UI Library — мобильное GUI-меню для Roblox (тёмная тема)
-    ============================================================
-
-    ПОДКЛЮЧЕНИЕ (пример):
-        local Lurk = loadstring(game:HttpGet("https://example.com/Lurk.lua"))()
-        local Window = Lurk:CreateWindow({ Name = "Lurk" })
-        local Tab1 = Window:AddTab("Tab1")
-        Tab1:AddToggle({ Name = "Example", Default = false, Callback = function(v) end })
-
-    ПУБЛИЧНЫЙ API:
-        Lurk:CreateWindow(config) -> Window
-            config = {
-                Name = "Lurk",
-                AccentColor = Color3.fromRGB(255, 30, 30),
-                Size = UDim2.fromOffset(430, 320),
-                SidebarWidth = 108,
-                OpenButtonText = "L",
-            }
-
-        Window:AddTab(name) -> Tab
-        Window:SelectTab(name)
-        Window:SetAccentColor(color3)
-        Window:Toggle(open)
-        Window:Notify(config)   -- config = { Title = "...", Text = "...", Duration = 4 }
-        Window:Destroy()
-
-        Tab:AddLabel(text) -> Instance
-        Tab:AddToggle(config) -> API { Set(value), Get() }
-        Tab:AddSlider(config) -> API { Set(value), Get() }
-        Tab:AddButton(config) -> API
-        Tab:AddDropdown(config) -> API { Set(value), Get() }
-        Tab:AddColorPicker(config) -> API { Set(color3), Get() }
-        Tab:AddTextbox(config) -> API { Set(text), Get() }
-        Tab:AddKeybind(config) -> API { Set(keycode), Get() }
-        Tab:AddSection(text) -> Instance
-        Tab:AddDivider() -> Instance
-        Tab:AddParagraph(config) -> API { Set(text), Get() }
-        Tab:AddMultiDropdown(config) -> API { Set(list), Get() }
-
-    СТРУКТУРА ФАЙЛА:
-        1. СЕРВИСЫ И УТИЛИТЫ
-        2. ВНУТРЕННИЙ РЕЕСТР ОВЕРЛЕЕВ (дропдауны, цветовые пикеры, поверх скролла)
-        3. КОНСТРУКТОР ЭЛЕМЕНТОВ (Toggle, Slider, Button, Dropdown, MultiDropdown, ColorPicker, Textbox, Keybind, Label, Section, Divider, Paragraph)
-        4. КОНСТРУКТОР ВКЛАДКИ (Tab)
-        5. КОНСТРУКТОР ОКНА (Window / CreateWindow)
-        6. ПУБЛИЧНЫЙ МОДУЛЬ (Lurk)
-]]
-
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -55,10 +5,6 @@ local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
--- =====================================================================
--- 1. СЕРВИСЫ И УТИЛИТЫ
--- =====================================================================
 
 local function NewInstance(className, properties, children)
     local inst = Instance.new(className)
@@ -92,15 +38,6 @@ local function FormatKeycodeName(keycode)
     end
     return keycode.Name
 end
-
--- =====================================================================
--- 2. ВНУТРЕННИЙ РЕЕСТР ОВЕРЛЕЕВ
--- =====================================================================
--- Дропдауны и цветовые пикеры рисуются на отдельном слое поверх всего
--- интерфейса (не внутри ScrollingFrame), чтобы их не обрезал скролл.
--- Этот реестр позволяет централизованно закрывать все открытые оверлеи —
--- по клику вне них, при переключении вкладки или закрытии окна.
--- =====================================================================
 
 local OverlayRegistry = {}
 
@@ -146,13 +83,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         end
     end
 end)
-
--- =====================================================================
--- 3. КОНСТРУКТОР ЭЛЕМЕНТОВ
--- =====================================================================
--- ElementFactory создаётся на каждое окно отдельно (замыкает ScreenGui,
--- AccentColor-объект и общий слой ZIndex для оверлеев конкретного окна).
--- =====================================================================
 
 local function CreateElementFactory(context)
     local ScreenGui = context.ScreenGui
@@ -474,7 +404,7 @@ local function CreateElementFactory(context)
             Font = Enum.Font.GothamBold,
             TextSize = 12,
             TextColor3 = Accent.Value,
-            Text = "v",
+            Text = "▼",
             Parent = box,
         })
 
@@ -634,7 +564,7 @@ local function CreateElementFactory(context)
             Name = "ColorPickerPanel_" .. name,
             BackgroundColor3 = Color3.fromRGB(16, 16, 16),
             BorderSizePixel = 0,
-            Size = UDim2.fromOffset(180, 170),
+            Size = UDim2.fromOffset(180, 190),
             Visible = false,
             ZIndex = 200,
             Parent = ScreenGui,
@@ -647,9 +577,65 @@ local function CreateElementFactory(context)
             Parent = panel,
         })
 
+        local pickerHeader = NewInstance("Frame", {
+            Name = "Header",
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, 20),
+            ZIndex = panel.ZIndex + 1,
+            Parent = panel,
+        })
+
+        local pickerHeaderTitle = NewInstance("TextLabel", {
+            Name = "HeaderTitle",
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -16, 1, 0),
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextColor3 = Accent.Value,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            ZIndex = pickerHeader.ZIndex + 1,
+            Parent = pickerHeader,
+        })
+
+        Accent.Changed:Connect(function(color)
+            pickerHeaderTitle.TextColor3 = color
+        end)
+
+        do
+            local draggingPanel = false
+            local panelDragStart
+            local panelStartPos
+            pickerHeader.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    draggingPanel = true
+                    panelDragStart = input.Position
+                    panelStartPos = panel.Position
+                end
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if draggingPanel and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = input.Position - panelDragStart
+                    panel.Position = UDim2.new(
+                        panelStartPos.X.Scale,
+                        panelStartPos.X.Offset + delta.X,
+                        panelStartPos.Y.Scale,
+                        panelStartPos.Y.Offset + delta.Y
+                    )
+                end
+            end)
+            UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    draggingPanel = false
+                end
+            end)
+        end
+
         local svMap = NewInstance("ImageButton", {
             Name = "SVMap",
-            Position = UDim2.fromOffset(10, 10),
+            Position = UDim2.fromOffset(10, 28),
             Size = UDim2.fromOffset(160, 110),
             BackgroundColor3 = Color3.fromHSV(h, 1, 1),
             BorderSizePixel = 0,
@@ -712,7 +698,7 @@ local function CreateElementFactory(context)
 
         local hueTrack = NewInstance("Frame", {
             Name = "HueTrack",
-            Position = UDim2.fromOffset(10, 130),
+            Position = UDim2.fromOffset(10, 148),
             Size = UDim2.fromOffset(160, 14),
             BorderSizePixel = 0,
             ZIndex = panel.ZIndex + 1,
@@ -749,7 +735,7 @@ local function CreateElementFactory(context)
 
         local hexBox = NewInstance("TextBox", {
             Name = "HexBox",
-            Position = UDim2.fromOffset(10, 148),
+            Position = UDim2.fromOffset(10, 168),
             Size = UDim2.fromOffset(160, 14),
             BackgroundColor3 = Color3.fromRGB(26, 26, 26),
             BorderSizePixel = 0,
@@ -1201,11 +1187,6 @@ local function CreateElementFactory(context)
             Parent = box,
         })
 
-        NewInstance("UIPadding", {
-            PaddingRight = UDim.new(0, 18),
-            Parent = box,
-        })
-
         local arrow = NewInstance("TextLabel", {
             Name = "Arrow",
             BackgroundTransparency = 1,
@@ -1215,7 +1196,7 @@ local function CreateElementFactory(context)
             Font = Enum.Font.GothamBold,
             TextSize = 12,
             TextColor3 = Accent.Value,
-            Text = "v",
+            Text = "▼",
             Parent = box,
         })
 
@@ -1377,12 +1358,108 @@ local function CreateElementFactory(context)
         return api
     end
 
+    function Factory.ProgressBar(parent, config)
+        config = config or {}
+        local name = config.Name or "Progress"
+        local default = config.Default or 0
+
+        local row = NewInstance("Frame", {
+            Name = "ProgressBar_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 38),
+            Parent = parent,
+        })
+
+        local label = NewInstance("TextLabel", {
+            Name = "Label",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 18),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name .. ": " .. tostring(math.floor(Clamp01(default) * 100)) .. "%",
+            Parent = row,
+        })
+
+        local track = NewInstance("Frame", {
+            Name = "Track",
+            Position = UDim2.fromOffset(0, 23),
+            Size = UDim2.new(1, 0, 0, 8),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        local fill = NewInstance("Frame", {
+            Name = "Fill",
+            Size = UDim2.new(Clamp01(default), 0, 1, 0),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Parent = track,
+        })
+
+        Accent.Changed:Connect(function(color)
+            fill.BackgroundColor3 = color
+        end)
+
+        local current = Clamp01(default)
+
+        local api = {}
+        function api.Set(value)
+            current = Clamp01(value)
+            TweenService:Create(fill, TweenInfo.new(0.2), { Size = UDim2.new(current, 0, 1, 0) }):Play()
+            label.Text = name .. ": " .. tostring(math.floor(current * 100)) .. "%"
+        end
+        function api.Get()
+            return current
+        end
+        return api
+    end
+
+    function Factory.Image(parent, config)
+        config = config or {}
+        local image = config.Image or ""
+        local height = config.Height or 80
+
+        local holder = NewInstance("Frame", {
+            Name = "Image",
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, height),
+            Parent = parent,
+        })
+
+        NewInstance("UIStroke", {
+            Name = "Stroke",
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = holder,
+        })
+
+        local img = NewInstance("ImageLabel", {
+            Name = "Img",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -8, 1, -8),
+            Image = image,
+            ScaleType = Enum.ScaleType.Fit,
+            Parent = holder,
+        })
+
+        local api = {}
+        function api.SetImage(id)
+            img.Image = id
+        end
+        function api.Set(id)
+            img.Image = id
+        end
+        return api
+    end
+
     return Factory
 end
-
--- =====================================================================
--- 4. КОНСТРУКТОР ВКЛАДКИ
--- =====================================================================
 
 local function CreateTab(context, tabName, isFirst)
     local Factory = context.Factory
@@ -1480,6 +1557,14 @@ local function CreateTab(context, tabName, isFirst)
         return Factory.MultiDropdown(scroll, config)
     end
 
+    function Tab:AddProgressBar(config)
+        return Factory.ProgressBar(scroll, config)
+    end
+
+    function Tab:AddImage(config)
+        return Factory.Image(scroll, config)
+    end
+
     function Tab:Refresh()
         RefreshCanvas()
     end
@@ -1488,10 +1573,6 @@ local function CreateTab(context, tabName, isFirst)
 
     return Tab
 end
-
--- =====================================================================
--- 5. КОНСТРУКТОР ОКНА
--- =====================================================================
 
 local function CreateWindow(config)
     config = config or {}
@@ -1956,9 +2037,45 @@ local function CreateWindow(config)
         openButtonStroke.Color = color
     end)
 
-    openButton.MouseButton1Click:Connect(function()
-        Window:Toggle()
-    end)
+    do
+        local dragging = false
+        local moved = false
+        local dragStart
+        local startPos
+
+        openButton.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                moved = false
+                dragStart = input.Position
+                startPos = openButton.Position
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local delta = input.Position - dragStart
+                if delta.Magnitude > 4 then
+                    moved = true
+                end
+                openButton.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+
+        openButton.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                if dragging and not moved then
+                    Window:Toggle()
+                end
+                dragging = false
+            end
+        end)
+    end
 
     do
         local dragging = false
@@ -1998,10 +2115,6 @@ local function CreateWindow(config)
 
     return Window
 end
-
--- =====================================================================
--- 6. ПУБЛИЧНЫЙ МОДУЛЬ
--- =====================================================================
 
 local Lurk = {}
 
