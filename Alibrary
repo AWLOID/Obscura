@@ -654,11 +654,20 @@ local function CreateElementFactory(context)
             Parent = panel,
         })
 
-        local svWhiteGradient = NewInstance("UIGradient", {
+        local svWhiteOverlay = NewInstance("Frame", {
+            Name = "WhiteOverlay",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundColor3 = Color3.new(1, 1, 1),
+            BorderSizePixel = 0,
+            ZIndex = svMap.ZIndex + 1,
+            Parent = svMap,
+        })
+
+        NewInstance("UIGradient", {
             Name = "WhiteGradient",
             Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(1, 1, 1)),
             Transparency = NumberSequence.new(0, 1),
-            Parent = svMap,
+            Parent = svWhiteOverlay,
         })
 
         local svBlackOverlay = NewInstance("Frame", {
@@ -666,7 +675,7 @@ local function CreateElementFactory(context)
             Size = UDim2.fromScale(1, 1),
             BackgroundColor3 = Color3.new(0, 0, 0),
             BorderSizePixel = 0,
-            ZIndex = svMap.ZIndex + 1,
+            ZIndex = svWhiteOverlay.ZIndex + 1,
             Parent = svMap,
         })
 
@@ -1036,6 +1045,7 @@ local function CreateTab(context, tabName, isFirst)
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ScrollBarThickness = 8,
         ScrollBarImageColor3 = Color3.fromRGB(230, 230, 230),
+        ScrollBarImageTransparency = 1,
         ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
         ClipsDescendants = true,
         Visible = isFirst,
