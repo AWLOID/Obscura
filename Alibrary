@@ -39,6 +39,60 @@ local function FormatKeycodeName(keycode)
     return keycode.Name
 end
 
+local function MakeDraggable(handle, frame, options)
+    options = options or {}
+    local threshold = options.Threshold or 0
+    local onClick = options.OnClick
+
+    local activeInput = nil
+    local startInputPos = nil
+    local startFramePos = nil
+    local moved = false
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        if activeInput then
+            return
+        end
+        activeInput = input
+        startInputPos = input.Position
+        startFramePos = frame.Position
+        moved = false
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End and activeInput == input then
+                if not moved and onClick then
+                    onClick()
+                end
+                activeInput = nil
+            end
+        end)
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not activeInput then
+            return
+        end
+        local isMatch = (input == activeInput)
+            or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
+        if not isMatch then
+            return
+        end
+        local delta = input.Position - startInputPos
+        if delta.Magnitude > threshold then
+            moved = true
+        end
+        frame.Position = UDim2.new(
+            startFramePos.X.Scale,
+            startFramePos.X.Offset + delta.X,
+            startFramePos.Y.Scale,
+            startFramePos.Y.Offset + delta.Y
+        )
+    end)
+end
+
 local OverlayRegistry = {}
 
 local function RegisterOverlay(holder, trigger, isOpenGetter, closeFn)
@@ -248,7 +302,7 @@ local function CreateElementFactory(context)
         end)
 
         local currentValue = default
-        local dragging = false
+        local activeInput = nil
 
         local function ApplyValue(value, fromUser)
             value = math.clamp(value, min, max)
@@ -270,28 +324,36 @@ local function CreateElementFactory(context)
             ApplyValue(min + (max - min) * ratio, true)
         end
 
+        local function BeginSlider(input)
+            activeInput = input
+            UpdateFromX(input.Position.X)
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End and activeInput == input then
+                    activeInput = nil
+                end
+            end)
+        end
+
         knob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                UpdateFromX(input.Position.X)
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
+            if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not activeInput then
+                BeginSlider(input)
             end
         end)
 
         track.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not activeInput then
+                BeginSlider(input)
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if not activeInput then
+                return
+            end
+            local isMatch = (input == activeInput)
+                or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
+            if isMatch then
                 UpdateFromX(input.Position.X)
-                dragging = true
             end
         end)
 
@@ -604,34 +666,7 @@ local function CreateElementFactory(context)
             pickerHeaderTitle.TextColor3 = color
         end)
 
-        do
-            local draggingPanel = false
-            local panelDragStart
-            local panelStartPos
-            pickerHeader.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    draggingPanel = true
-                    panelDragStart = input.Position
-                    panelStartPos = panel.Position
-                end
-            end)
-            UserInputService.InputChanged:Connect(function(input)
-                if draggingPanel and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                    local delta = input.Position - panelDragStart
-                    panel.Position = UDim2.new(
-                        panelStartPos.X.Scale,
-                        panelStartPos.X.Offset + delta.X,
-                        panelStartPos.Y.Scale,
-                        panelStartPos.Y.Offset + delta.Y
-                    )
-                end
-            end)
-            UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    draggingPanel = false
-                end
-            end)
-        end
+        MakeDraggable(pickerHeader, panel)
 
         local svMap = NewInstance("ImageButton", {
             Name = "SVMap",
@@ -2852,77 +2887,14 @@ local function CreateWindow(config)
         openButtonStroke.Color = color
     end)
 
-    do
-        local dragging = false
-        local moved = false
-        local dragStart
-        local startPos
+    MakeDraggable(openButton, openButton, {
+        Threshold = 4,
+        OnClick = function()
+            Window:Toggle()
+        end,
+    })
 
-        openButton.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                moved = false
-                dragStart = input.Position
-                startPos = openButton.Position
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local delta = input.Position - dragStart
-                if delta.Magnitude > 4 then
-                    moved = true
-                end
-                openButton.Position = UDim2.new(
-                    startPos.X.Scale,
-                    startPos.X.Offset + delta.X,
-                    startPos.Y.Scale,
-                    startPos.Y.Offset + delta.Y
-                )
-            end
-        end)
-
-        openButton.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                if dragging and not moved then
-                    Window:Toggle()
-                end
-                dragging = false
-            end
-        end)
-    end
-
-    do
-        local dragging = false
-        local dragStartMousePos
-        local dragStartWindowPos
-
-        titleBar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                dragStartMousePos = input.Position
-                dragStartWindowPos = mainWindow.Position
-
-                input.Changed:Connect(function()
-                    if input.UserInputState == Enum.UserInputState.End then
-                        dragging = false
-                    end
-                end)
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local delta = input.Position - dragStartMousePos
-                mainWindow.Position = UDim2.new(
-                    dragStartWindowPos.X.Scale,
-                    dragStartWindowPos.X.Offset + delta.X,
-                    dragStartWindowPos.Y.Scale,
-                    dragStartWindowPos.Y.Offset + delta.Y
-                )
-            end
-        end)
-    end
+    MakeDraggable(titleBar, mainWindow)
 
     function Window:Destroy()
         ScreenGui:Destroy()
