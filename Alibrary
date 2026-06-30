@@ -23,6 +23,7 @@
         Window:SelectTab(name)
         Window:SetAccentColor(color3)
         Window:Toggle(open)
+        Window:Notify(config)   -- config = { Title = "...", Text = "...", Duration = 4 }
         Window:Destroy()
 
         Tab:AddLabel(text) -> Instance
@@ -33,11 +34,15 @@
         Tab:AddColorPicker(config) -> API { Set(color3), Get() }
         Tab:AddTextbox(config) -> API { Set(text), Get() }
         Tab:AddKeybind(config) -> API { Set(keycode), Get() }
+        Tab:AddSection(text) -> Instance
+        Tab:AddDivider() -> Instance
+        Tab:AddParagraph(config) -> API { Set(text), Get() }
+        Tab:AddMultiDropdown(config) -> API { Set(list), Get() }
 
     СТРУКТУРА ФАЙЛА:
         1. СЕРВИСЫ И УТИЛИТЫ
         2. ВНУТРЕННИЙ РЕЕСТР ОВЕРЛЕЕВ (дропдауны, цветовые пикеры, поверх скролла)
-        3. КОНСТРУКТОР ЭЛЕМЕНТОВ (Toggle, Slider, Button, Dropdown, ColorPicker, Textbox, Keybind, Label)
+        3. КОНСТРУКТОР ЭЛЕМЕНТОВ (Toggle, Slider, Button, Dropdown, MultiDropdown, ColorPicker, Textbox, Keybind, Label, Section, Divider, Paragraph)
         4. КОНСТРУКТОР ВКЛАДКИ (Tab)
         5. КОНСТРУКТОР ОКНА (Window / CreateWindow)
         6. ПУБЛИЧНЫЙ МОДУЛЬ (Lurk)
@@ -1023,6 +1028,355 @@ local function CreateElementFactory(context)
         return api
     end
 
+    function Factory.Section(parent, text)
+        local holder = NewInstance("Frame", {
+            Name = "Section_" .. text,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 22),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            Name = "Title",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.upper(text),
+            Parent = holder,
+        })
+
+        local underline = NewInstance("Frame", {
+            Name = "Underline",
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 1),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Parent = holder,
+        })
+
+        Accent.Changed:Connect(function(color)
+            underline.BackgroundColor3 = color
+        end)
+
+        return holder
+    end
+
+    function Factory.Divider(parent)
+        local holder = NewInstance("Frame", {
+            Name = "Divider",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 8),
+            Parent = parent,
+        })
+
+        NewInstance("Frame", {
+            Name = "Line",
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            Size = UDim2.new(1, 0, 0, 1),
+            BackgroundColor3 = Color3.fromRGB(60, 60, 60),
+            BorderSizePixel = 0,
+            Parent = holder,
+        })
+
+        return holder
+    end
+
+    function Factory.Paragraph(parent, config)
+        config = config or {}
+        local title = config.Title or "Paragraph"
+        local body = config.Body or config.Text or ""
+
+        local holder = NewInstance("Frame", {
+            Name = "Paragraph_" .. title,
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Parent = parent,
+        })
+
+        NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 2),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = holder,
+        })
+
+        NewInstance("TextLabel", {
+            Name = "Title",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = title,
+            LayoutOrder = 1,
+            Parent = holder,
+        })
+
+        local bodyLabel = NewInstance("TextLabel", {
+            Name = "Body",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(160, 160, 160),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            Text = body,
+            LayoutOrder = 2,
+            Parent = holder,
+        })
+
+        local api = {}
+        function api.SetText(text)
+            bodyLabel.Text = text
+        end
+        function api.Set(text)
+            bodyLabel.Text = text
+        end
+        function api.Get()
+            return bodyLabel.Text
+        end
+        return api
+    end
+
+    function Factory.MultiDropdown(parent, config)
+        config = config or {}
+        local name = config.Name or "Dropdown"
+        local options = config.Options or {}
+        local callback = config.Callback
+
+        local selected = {}
+        if config.Default then
+            for _, item in ipairs(config.Default) do
+                selected[item] = true
+            end
+        end
+
+        local row = NewInstance("Frame", {
+            Name = "MultiDropdown_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 46),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            Name = "Label",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local box = NewInstance("TextButton", {
+            Name = "Box",
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 24),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Text = "  ...",
+            Parent = row,
+        })
+
+        NewInstance("UIStroke", {
+            Name = "BoxStroke",
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = box,
+        })
+
+        NewInstance("UIPadding", {
+            PaddingRight = UDim.new(0, 18),
+            Parent = box,
+        })
+
+        local arrow = NewInstance("TextLabel", {
+            Name = "Arrow",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(16, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextColor3 = Accent.Value,
+            Text = "v",
+            Parent = box,
+        })
+
+        Accent.Changed:Connect(function(color)
+            arrow.TextColor3 = color
+        end)
+
+        local optionsHolder = NewInstance("Frame", {
+            Name = "MultiOptionsHolder_" .. name,
+            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(0, #options * 24),
+            Visible = false,
+            ZIndex = 200,
+            Parent = ScreenGui,
+        })
+
+        NewInstance("UIStroke", {
+            Name = "OptionsStroke",
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = optionsHolder,
+        })
+
+        NewInstance("UIListLayout", {
+            Name = "OptionsLayout",
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = optionsHolder,
+        })
+
+        local isOpen = false
+        local optionChecks = {}
+
+        local function SelectedList()
+            local list = {}
+            for _, opt in ipairs(options) do
+                if selected[opt] then
+                    table.insert(list, opt)
+                end
+            end
+            return list
+        end
+
+        local function UpdateBoxText()
+            local list = SelectedList()
+            if #list == 0 then
+                box.Text = "  ..."
+            else
+                box.Text = "  " .. table.concat(list, ", ")
+            end
+        end
+
+        local function Close()
+            isOpen = false
+            optionsHolder.Visible = false
+        end
+
+        local function RebuildOptions()
+            for _, child in ipairs(optionsHolder:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child:Destroy()
+                end
+            end
+            optionChecks = {}
+            for _, opt in ipairs(options) do
+                local optBtn = NewInstance("TextButton", {
+                    Name = "Option_" .. tostring(opt),
+                    BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+                    BorderSizePixel = 0,
+                    AutoButtonColor = false,
+                    Size = UDim2.new(1, 0, 0, 24),
+                    Font = Enum.Font.Gotham,
+                    TextSize = 13,
+                    TextColor3 = Color3.fromRGB(200, 200, 200),
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    Text = "  " .. tostring(opt),
+                    ZIndex = optionsHolder.ZIndex + 1,
+                    Parent = optionsHolder,
+                })
+
+                local check = NewInstance("Frame", {
+                    Name = "Check",
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, -8, 0.5, 0),
+                    Size = UDim2.fromOffset(10, 10),
+                    BackgroundColor3 = Accent.Value,
+                    BorderSizePixel = 0,
+                    BackgroundTransparency = selected[opt] and 0 or 1,
+                    ZIndex = optBtn.ZIndex + 1,
+                    Parent = optBtn,
+                })
+
+                NewInstance("UIStroke", {
+                    Color = Color3.fromRGB(80, 80, 80),
+                    Thickness = 1,
+                    Parent = check,
+                })
+
+                Accent.Changed:Connect(function(color)
+                    check.BackgroundColor3 = color
+                end)
+
+                optionChecks[opt] = check
+
+                optBtn.MouseButton1Click:Connect(function()
+                    selected[opt] = not selected[opt]
+                    check.BackgroundTransparency = selected[opt] and 0 or 1
+                    UpdateBoxText()
+                    if callback then
+                        callback(SelectedList())
+                    end
+                end)
+            end
+            optionsHolder.Size = UDim2.fromOffset(optionsHolder.AbsoluteSize.X, #options * 24)
+        end
+
+        RebuildOptions()
+        UpdateBoxText()
+
+        local function Open()
+            CloseAllOverlaysExcept(optionsHolder)
+            local boxPos = box.AbsolutePosition
+            local boxSize = box.AbsoluteSize
+            optionsHolder.Position = UDim2.fromOffset(boxPos.X, boxPos.Y + boxSize.Y + 2)
+            optionsHolder.Size = UDim2.fromOffset(boxSize.X, #options * 24)
+            optionsHolder.Visible = true
+            isOpen = true
+        end
+
+        box.MouseButton1Click:Connect(function()
+            if isOpen then
+                Close()
+            else
+                Open()
+            end
+        end)
+
+        RegisterOverlay(optionsHolder, box, function() return isOpen end, Close)
+
+        local api = {}
+        function api.Set(values)
+            selected = {}
+            for _, item in ipairs(values or {}) do
+                selected[item] = true
+            end
+            for opt, check in pairs(optionChecks) do
+                check.BackgroundTransparency = selected[opt] and 0 or 1
+            end
+            UpdateBoxText()
+        end
+        function api.Get()
+            return SelectedList()
+        end
+        function api.SetOptions(newOptions)
+            options = newOptions
+            RebuildOptions()
+            UpdateBoxText()
+        end
+        return api
+    end
+
     return Factory
 end
 
@@ -1108,6 +1462,22 @@ local function CreateTab(context, tabName, isFirst)
 
     function Tab:AddKeybind(config)
         return Factory.Keybind(scroll, config)
+    end
+
+    function Tab:AddSection(text)
+        return Factory.Section(scroll, text)
+    end
+
+    function Tab:AddDivider()
+        return Factory.Divider(scroll)
+    end
+
+    function Tab:AddParagraph(config)
+        return Factory.Paragraph(scroll, config)
+    end
+
+    function Tab:AddMultiDropdown(config)
+        return Factory.MultiDropdown(scroll, config)
     end
 
     function Tab:Refresh()
@@ -1377,6 +1747,132 @@ local function CreateWindow(config)
 
     function Window:SetAccentColor(color3)
         Accent.Set(color3)
+    end
+
+    local notifyHolder = NewInstance("Frame", {
+        Name = "NotifyHolder",
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, -10, 1, -10),
+        Size = UDim2.fromOffset(240, 420),
+        BackgroundTransparency = 1,
+        ZIndex = 300,
+        Parent = ScreenGui,
+    })
+
+    NewInstance("UIListLayout", {
+        Name = "NotifyLayout",
+        VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = notifyHolder,
+    })
+
+    function Window:Notify(config)
+        config = config or {}
+        local title = config.Title or "Notification"
+        local text = config.Text or config.Body or ""
+        local duration = config.Duration or 4
+
+        local card = NewInstance("Frame", {
+            Name = "Notification",
+            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(240, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = notifyHolder.ZIndex + 1,
+            Parent = notifyHolder,
+        })
+
+        NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = card,
+        })
+
+        local accentBar = NewInstance("Frame", {
+            Name = "AccentBar",
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Size = UDim2.new(0, 3, 1, 0),
+            ZIndex = card.ZIndex + 2,
+            Parent = card,
+        })
+
+        Accent.Changed:Connect(function(color)
+            accentBar.BackgroundColor3 = color
+        end)
+
+        local content = NewInstance("Frame", {
+            Name = "Content",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = card.ZIndex + 1,
+            Parent = card,
+        })
+
+        NewInstance("UIPadding", {
+            PaddingTop = UDim.new(0, 8),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 12),
+            PaddingRight = UDim.new(0, 10),
+            Parent = content,
+        })
+
+        NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 2),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = content,
+        })
+
+        NewInstance("TextLabel", {
+            Name = "Title",
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextColor3 = Accent.Value,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = title,
+            LayoutOrder = 1,
+            ZIndex = content.ZIndex + 1,
+            Parent = content,
+        })
+
+        if text ~= "" then
+            NewInstance("TextLabel", {
+                Name = "Body",
+                BackgroundTransparency = 1,
+                AutomaticSize = Enum.AutomaticSize.Y,
+                Size = UDim2.new(1, 0, 0, 0),
+                Font = Enum.Font.Gotham,
+                TextSize = 13,
+                TextColor3 = Color3.fromRGB(190, 190, 190),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextYAlignment = Enum.TextYAlignment.Top,
+                TextWrapped = true,
+                Text = text,
+                LayoutOrder = 2,
+                ZIndex = content.ZIndex + 1,
+                Parent = content,
+            })
+        end
+
+        card.BackgroundTransparency = 1
+        TweenService:Create(card, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
+
+        task.delay(duration, function()
+            if card and card.Parent then
+                local fade = TweenService:Create(card, TweenInfo.new(0.25), { BackgroundTransparency = 1 })
+                fade:Play()
+                fade.Completed:Connect(function()
+                    if card then
+                        card:Destroy()
+                    end
+                end)
+            end
+        end)
     end
 
     local menuOpen = false
