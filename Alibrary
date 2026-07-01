@@ -5,6 +5,30 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+local GuiParent = PlayerGui
+do
+    local ok, hui = pcall(function()
+        if typeof(gethui) == "function" then return gethui() end
+        return nil
+    end)
+    if ok and hui then
+        GuiParent = hui
+    else
+        local ok2, cg = pcall(function() return game:GetService("CoreGui") end)
+        if ok2 and cg then GuiParent = cg end
+    end
+end
+
+local function ProtectGui(gui)
+    pcall(function()
+        if typeof(syn) == "table" and syn.protect_gui then
+            syn.protect_gui(gui)
+        elseif typeof(protectgui) == "function" then
+            protectgui(gui)
+        end
+    end)
+end
+
 local function NewInstance(className, properties, children)
     local inst = Instance.new(className)
     for key, value in pairs(properties or {}) do
@@ -3168,7 +3192,7 @@ local function CreateWindow(config)
     local openButtonText = config.OpenButtonText or string.sub(windowName, 1, 1)
     local startColor = config.AccentColor or Color3.fromRGB(255, 30, 30)
 
-    local existing = PlayerGui:FindFirstChild("LurkGui_" .. windowName)
+    local existing = GuiParent:FindFirstChild("LurkGui_" .. windowName)
     if existing then
         existing:Destroy()
     end
@@ -3177,9 +3201,11 @@ local function CreateWindow(config)
         Name = "LurkGui_" .. windowName,
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
+        DisplayOrder = 999999,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        Parent = PlayerGui,
     })
+    ProtectGui(ScreenGui)
+    ScreenGui.Parent = GuiParent
 
     local Accent = {}
     Accent.Value = startColor
@@ -3590,8 +3616,9 @@ local function CreateWindow(config)
             IgnoreGuiInset = false,
             DisplayOrder = 1000000,
             ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-            Parent = PlayerGui,
         })
+        ProtectGui(floatingGui)
+        floatingGui.Parent = GuiParent
 
         local btn = NewInstance("TextButton", {
             Name = "FloatingButton",
@@ -3688,12 +3715,11 @@ local function CreateWindow(config)
         applyVisual()
         Accent.Changed:Connect(applyVisual)
 
-        local activeInput = nil
+        local dragging = false
         local moved = false
         local startInputPos, startBtnPos
 
         local function DoActivate()
-            if moved then return end
             if isToggle then
                 state = not state
                 applyVisual()
@@ -3706,7 +3732,8 @@ local function CreateWindow(config)
             end
         end
 
-        local function MoveTo(pos)
+        local function UpdateDrag(pos)
+            if not dragging then return end
             local delta = pos - startInputPos
             if not moved and delta.Magnitude > threshold then moved = true end
             if moved then
@@ -3721,43 +3748,45 @@ local function CreateWindow(config)
         end
 
         btn.InputBegan:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1
-                and input.UserInputType ~= Enum.UserInputType.Touch then
-                return
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                moved = false
+                startInputPos = input.Position
+                startBtnPos = btn.Position
             end
-            activeInput = input
-            moved = false
-            startInputPos = input.Position
-            startBtnPos = btn.Position
+        end)
 
-            if input.UserInputType == Enum.UserInputType.Touch then
-                local conn
-                conn = input.Changed:Connect(function(prop)
-                    if prop == "Position" then
-                        MoveTo(input.Position)
-                    end
-                    if input.UserInputState == Enum.UserInputState.End then
-                        if conn then conn:Disconnect() end
-                        DoActivate()
-                        if activeInput == input then activeInput = nil end
-                    end
-                end)
+        btn.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.Touch
+                or input.UserInputType == Enum.UserInputType.MouseMovement) then
+                UpdateDrag(input.Position)
             end
         end)
 
         UserInputService.InputChanged:Connect(function(input)
-            if activeInput == nil then return end
-            if activeInput.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-            if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-            MoveTo(input.Position)
+            if dragging and (input.UserInputType == Enum.UserInputType.Touch
+                or input.UserInputType == Enum.UserInputType.MouseMovement) then
+                UpdateDrag(input.Position)
+            end
+        end)
+
+        btn.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                if dragging then
+                    dragging = false
+                    if not moved then
+                        DoActivate()
+                    end
+                end
+            end
         end)
 
         UserInputService.InputEnded:Connect(function(input)
-            if activeInput == nil then return end
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                and activeInput.UserInputType == Enum.UserInputType.MouseButton1 then
-                DoActivate()
-                activeInput = nil
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch) then
+                dragging = false
             end
         end)
 
