@@ -3716,7 +3716,7 @@ local function CreateWindow(config)
         applyVisual()
         Accent.Changed:Connect(applyVisual)
 
-        local dragging = false
+        local activeInput = nil
         local moved = false
         local startInputPos, startBtnPos
 
@@ -3734,7 +3734,7 @@ local function CreateWindow(config)
         end
 
         local function UpdateDrag(pos)
-            if not dragging then return end
+            if not activeInput then return end
             local delta = pos - startInputPos
             if not moved and delta.Magnitude > threshold then moved = true end
             if moved then
@@ -3748,10 +3748,22 @@ local function CreateWindow(config)
             end
         end
 
+        local function EndDrag(input)
+            if activeInput == nil then return end
+            if input ~= activeInput then return end
+            local wasMoved = moved
+            activeInput = nil
+            moved = false
+            if not wasMoved then
+                DoActivate()
+            end
+        end
+
         btn.InputBegan:Connect(function(input)
+            if activeInput ~= nil then return end
             if input.UserInputType == Enum.UserInputType.MouseButton1
                 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
+                activeInput = input
                 moved = false
                 startInputPos = input.Position
                 startBtnPos = btn.Position
@@ -3759,14 +3771,14 @@ local function CreateWindow(config)
         end)
 
         btn.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.Touch
+            if activeInput and (input.UserInputType == Enum.UserInputType.Touch
                 or input.UserInputType == Enum.UserInputType.MouseMovement) then
                 UpdateDrag(input.Position)
             end
         end)
 
         UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.Touch
+            if activeInput and (input.UserInputType == Enum.UserInputType.Touch
                 or input.UserInputType == Enum.UserInputType.MouseMovement) then
                 UpdateDrag(input.Position)
             end
@@ -3775,19 +3787,14 @@ local function CreateWindow(config)
         btn.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1
                 or input.UserInputType == Enum.UserInputType.Touch then
-                if dragging then
-                    dragging = false
-                    if not moved then
-                        DoActivate()
-                    end
-                end
+                EndDrag(input)
             end
         end)
 
         UserInputService.InputEnded:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch) then
-                dragging = false
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                EndDrag(input)
             end
         end)
 
