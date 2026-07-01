@@ -3696,19 +3696,20 @@ local function CreateWindow(config)
         btn:GetPropertyChangedSignal("AbsolutePosition"):Connect(ClampButton)
         btn:GetPropertyChangedSignal("AbsoluteSize"):Connect(ClampButton)
 
+        local baseText = cfg.Text or ""
         local function applyVisual()
             if isToggle and state then
                 btn.BackgroundColor3 = Accent.Value
                 btn.TextColor3 = Color3.fromRGB(255, 255, 255)
                 stroke.Color = Accent.Value
                 stroke.Transparency = 0
-                if cfg.OnText then btn.Text = cfg.OnText end
+                if isToggle then btn.Text = cfg.OnText or baseText end
             else
                 btn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
                 btn.TextColor3 = Color3.fromRGB(235, 235, 235)
                 stroke.Color = Accent.Value
                 stroke.Transparency = 0.35
-                if isToggle and cfg.OffText then btn.Text = cfg.OffText end
+                if isToggle then btn.Text = cfg.OffText or baseText end
             end
         end
 
