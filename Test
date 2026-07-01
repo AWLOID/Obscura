@@ -111,23 +111,21 @@ local function MakeDraggable(handle, target, onDragStart)
 end
 
 local function MakeValueDragger(hitTargets, onInputDown, onInputMove)
-    local activeInput = nil
+    local dragging = false
 
     local function Bind(obj)
         obj.InputBegan:Connect(function(input)
-            if activeInput ~= nil then
+            if dragging then
                 return
             end
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                activeInput = input
+                dragging = true
                 onInputDown(input)
 
                 local connEnded
                 connEnded = UserInputService.InputEnded:Connect(function(endedInput)
-                    if endedInput == input then
-                        if activeInput == input then
-                            activeInput = nil
-                        end
+                    if endedInput.UserInputType == Enum.UserInputType.MouseButton1 or endedInput.UserInputType == Enum.UserInputType.Touch then
+                        dragging = false
                         if connEnded then connEnded:Disconnect() end
                     end
                 end)
@@ -140,7 +138,7 @@ local function MakeValueDragger(hitTargets, onInputDown, onInputMove)
     end
 
     UserInputService.InputChanged:Connect(function(input)
-        if activeInput == nil or input ~= activeInput then
+        if not dragging then
             return
         end
         if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
