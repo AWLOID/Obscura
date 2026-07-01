@@ -3514,10 +3514,19 @@ local function CreateWindow(config)
         local minSize = cfg.MinSize or 55
         local maxSize = cfg.MaxSize or 200
         local size = math.clamp(cfg.Size or 90, minSize, maxSize)
-        local radius = cfg.Radius or 16
+        local radius = cfg.Radius or 6
         local threshold = cfg.DragThreshold or 6
 
         local state = cfg.Default == true
+
+        local floatingGui = NewInstance("ScreenGui", {
+            Name = "LurkFloating",
+            ResetOnSpawn = false,
+            IgnoreGuiInset = false,
+            DisplayOrder = 1000000,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+            Parent = PlayerGui,
+        })
 
         local btn = NewInstance("TextButton", {
             Name = "FloatingButton",
@@ -3534,7 +3543,7 @@ local function CreateWindow(config)
             Active = true,
             Selectable = true,
             ZIndex = 250,
-            Parent = ScreenGui,
+            Parent = floatingGui,
         })
 
         NewInstance("UICorner", { CornerRadius = UDim.new(0, radius), Parent = btn })
@@ -3549,16 +3558,6 @@ local function CreateWindow(config)
 
         NewInstance("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 8, Parent = btn })
 
-        local inner = NewInstance("Frame", {
-            BackgroundColor3 = Color3.fromRGB(60, 60, 60),
-            BorderSizePixel = 0,
-            Position = UDim2.fromOffset(1, 1),
-            Size = UDim2.new(1, -2, 1, -2),
-            ZIndex = btn.ZIndex - 1,
-            Parent = btn,
-        })
-        NewInstance("UICorner", { CornerRadius = UDim.new(0, radius), Parent = inner })
-
         local stroke = NewInstance("UIStroke", {
             Thickness = 1.5,
             Color = Accent.Value,
@@ -3568,7 +3567,9 @@ local function CreateWindow(config)
         })
 
         local handle = {}
+        handle.Gui = floatingGui
         handle.Button = btn
+        handle.Stroke = stroke
 
         local function applyVisual()
             if isToggle and state then
@@ -3667,7 +3668,7 @@ local function CreateWindow(config)
         end
 
         function handle:SetVisible(value)
-            btn.Visible = value ~= false
+            floatingGui.Enabled = value ~= false
         end
 
         function handle:SetPosition(udim2)
@@ -3675,7 +3676,7 @@ local function CreateWindow(config)
         end
 
         function handle:Destroy()
-            btn:Destroy()
+            floatingGui:Destroy()
         end
 
         function handle:AddSizeSlider(tab, sc)
