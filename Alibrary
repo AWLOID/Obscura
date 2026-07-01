@@ -308,12 +308,47 @@ local function CreateElementFactory(context)
         local default = config.Default or false
         local callback = config.Callback
 
+        local container = NewInstance("Frame", {
+            Name = "ToggleContainer_" .. name,
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Parent = parent,
+        })
+
+        NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = container,
+        })
+
         local row = NewInstance("Frame", {
             Name = "Toggle_" .. name,
             BackgroundTransparency = 1,
+            LayoutOrder = 1,
             Size = UDim2.new(1, 0, 0, 26),
-            Parent = parent,
+            Parent = container,
         })
+
+        local subHolder = nil
+        local function EnsureSub()
+            if not subHolder then
+                subHolder = NewInstance("Frame", {
+                    Name = "SubContent",
+                    BackgroundTransparency = 1,
+                    LayoutOrder = 2,
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    Size = UDim2.new(1, 0, 0, 0),
+                    Parent = container,
+                })
+                NewInstance("UIListLayout", {
+                    Padding = UDim.new(0, 6),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    Parent = subHolder,
+                })
+            end
+            return subHolder
+        end
 
         NewInstance("TextLabel", {
             BackgroundTransparency = 1,
@@ -387,6 +422,29 @@ local function CreateElementFactory(context)
         end
         function api.Get()
             return state
+        end
+        api.Row = row
+        api.Container = container
+        function api:GetContainer()
+            return EnsureSub()
+        end
+        function api:AddSlider(sc)
+            return Factory.Slider(EnsureSub(), sc)
+        end
+        function api:AddToggle(sc)
+            return Factory.Toggle(EnsureSub(), sc)
+        end
+        function api:AddButton(sc)
+            return Factory.Button(EnsureSub(), sc)
+        end
+        function api:AddLabel(t)
+            return Factory.Label(EnsureSub(), t)
+        end
+        function api:ClearSub()
+            if subHolder then
+                subHolder:Destroy()
+                subHolder = nil
+            end
         end
         return api
     end
@@ -3602,6 +3660,12 @@ local function CreateWindow(config)
                 task.defer(ClampButton)
             end)
         end
+        floatingGui:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if floatingGui.Enabled then
+                task.defer(ClampButton)
+                task.delay(0.05, ClampButton)
+            end
+        end)
 
         local function applyVisual()
             if isToggle and state then
@@ -3656,20 +3720,23 @@ local function CreateWindow(config)
 
         UserInputService.InputEnded:Connect(function(input)
             if activeInput == nil then return end
-            if input == activeInput then
+            if input == activeInput
+                or (input.UserInputType == Enum.UserInputType.MouseButton1 and activeInput.UserInputType == Enum.UserInputType.MouseButton1) then
                 activeInput = nil
-                if not moved then
-                    if isToggle then
-                        state = not state
-                        applyVisual()
-                        if cfg.Callback then
-                            local s = state
-                            task.spawn(function() cfg.Callback(s) end)
-                        end
-                    else
-                        if cfg.Callback then task.spawn(cfg.Callback) end
-                    end
+            end
+        end)
+
+        btn.Activated:Connect(function()
+            if moved then return end
+            if isToggle then
+                state = not state
+                applyVisual()
+                if cfg.Callback then
+                    local s = state
+                    task.spawn(function() cfg.Callback(s) end)
                 end
+            else
+                if cfg.Callback then task.spawn(cfg.Callback) end
             end
         end)
 
