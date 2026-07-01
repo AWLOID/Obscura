@@ -484,6 +484,13 @@ local function CreateElementFactory(context)
         function api.Get()
             return currentValue
         end
+        api.Instance = row
+        function api.SetVisible(v)
+            row.Visible = v ~= false
+        end
+        function api.Destroy()
+            row:Destroy()
+        end
         return api
     end
 
@@ -3511,11 +3518,11 @@ local function CreateWindow(config)
     local function CreateFloatingButton(cfg, forceToggle)
         cfg = cfg or {}
         local isToggle = forceToggle == true or cfg.Toggle == true
-        local minSize = cfg.MinSize or 55
+        local minSize = cfg.MinSize or 40
         local maxSize = cfg.MaxSize or 200
         local size = math.clamp(cfg.Size or 90, minSize, maxSize)
         local radius = cfg.Radius or 6
-        local threshold = cfg.DragThreshold or 6
+        local threshold = cfg.DragThreshold or 10
 
         local state = cfg.Default == true
 
@@ -3571,6 +3578,31 @@ local function CreateWindow(config)
         handle.Button = btn
         handle.Stroke = stroke
 
+        local function ClampButton()
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            local vp = cam.ViewportSize
+            local absSize = btn.AbsoluteSize
+            local absPos = btn.AbsolutePosition
+            local maxX = math.max(0, vp.X - absSize.X)
+            local maxY = math.max(0, vp.Y - absSize.Y)
+            local cx = math.clamp(absPos.X, 0, maxX)
+            local cy = math.clamp(absPos.Y, 0, maxY)
+            local dx = cx - absPos.X
+            local dy = cy - absPos.Y
+            if dx ~= 0 or dy ~= 0 then
+                local p = btn.Position
+                btn.Position = UDim2.new(p.X.Scale, p.X.Offset + dx, p.Y.Scale, p.Y.Offset + dy)
+            end
+        end
+        handle.Clamp = ClampButton
+        task.defer(ClampButton)
+        if workspace.CurrentCamera then
+            workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                task.defer(ClampButton)
+            end)
+        end
+
         local function applyVisual()
             if isToggle and state then
                 btn.BackgroundColor3 = Accent.Value
@@ -3610,13 +3642,16 @@ local function CreateWindow(config)
                 or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
             if not isMatch then return end
             local delta = input.Position - startInputPos
-            if delta.Magnitude > threshold then moved = true end
-            btn.Position = UDim2.new(
-                startBtnPos.X.Scale,
-                startBtnPos.X.Offset + delta.X,
-                startBtnPos.Y.Scale,
-                startBtnPos.Y.Offset + delta.Y
-            )
+            if not moved and delta.Magnitude > threshold then moved = true end
+            if moved then
+                btn.Position = UDim2.new(
+                    startBtnPos.X.Scale,
+                    startBtnPos.X.Offset + delta.X,
+                    startBtnPos.Y.Scale,
+                    startBtnPos.Y.Offset + delta.Y
+                )
+                ClampButton()
+            end
         end)
 
         UserInputService.InputEnded:Connect(function(input)
@@ -3641,6 +3676,7 @@ local function CreateWindow(config)
         function handle:SetSize(px)
             size = math.clamp(px, minSize, maxSize)
             btn.Size = UDim2.fromOffset(size, size)
+            task.defer(ClampButton)
             return size
         end
 
