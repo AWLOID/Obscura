@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -28,10 +27,6 @@ local function RoundTo(value, step)
     return math.floor(value / step + 0.5) * step
 end
 
-local function HsvToColor3(h, s, v)
-    return Color3.fromHSV(Clamp01(h), Clamp01(s), Clamp01(v))
-end
-
 local function FormatKeycodeName(keycode)
     if not keycode then
         return "None"
@@ -39,40 +34,111 @@ local function FormatKeycodeName(keycode)
     return keycode.Name
 end
 
-local function MakeDraggable(handle, frame, options)
-    options = options or {}
-    local threshold = options.Threshold or 0
-    local onClick = options.OnClick
+local function PointInsideGui(guiObject, x, y)
+    local pos = guiObject.AbsolutePosition
+    local size = guiObject.AbsoluteSize
+    return x >= pos.X and x <= pos.X + size.X and y >= pos.Y and y <= pos.Y + size.Y
+end
 
+local function ClampOpenPosition(x, y, width, height)
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local maxX = math.max(4, viewport.X - width - 4)
+    local maxY = math.max(4, viewport.Y - height - 4)
+    return math.clamp(x, 4, maxX), math.clamp(y, 4, maxY)
+end
+
+local function MakeDraggable(handle, target, onDragStart)
     local activeInput = nil
     local startInputPos = nil
-    local startFramePos = nil
-    local moved = false
+    local startTargetPos = nil
 
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-        if activeInput then
+    local function BeginDrag(input)
+        if activeInput ~= nil then
             return
         end
         activeInput = input
         startInputPos = input.Position
-        startFramePos = frame.Position
-        moved = false
+        startTargetPos = target.Position
+        if onDragStart then
+            onDragStart()
+        end
 
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End and activeInput == input then
-                if not moved and onClick then
-                    onClick()
+        local connChanged
+        local connEnded
+
+        connChanged = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                if connChanged then connChanged:Disconnect() end
+                if connEnded then connEnded:Disconnect() end
+                if activeInput == input then
+                    activeInput = nil
                 end
-                activeInput = nil
             end
         end)
+
+        connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+            if endedInput == input then
+                if connChanged then connChanged:Disconnect() end
+                if connEnded then connEnded:Disconnect() end
+                if activeInput == input then
+                    activeInput = nil
+                end
+            end
+        end)
+    end
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            BeginDrag(input)
+        end
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if not activeInput then
+        if activeInput == nil or input ~= activeInput then
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local delta = input.Position - startInputPos
+        target.Position = UDim2.new(
+            startTargetPos.X.Scale,
+            startTargetPos.X.Offset + delta.X,
+            startTargetPos.Y.Scale,
+            startTargetPos.Y.Offset + delta.Y
+        )
+    end)
+end
+
+local function MakeValueDragger(hitTargets, onInputDown, onInputMove)
+    local activeInput = nil
+
+    local function Bind(obj)
+        obj.InputBegan:Connect(function(input)
+            if activeInput ~= nil then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                activeInput = input
+                onInputDown(input)
+
+                local connEnded
+                connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+                    if endedInput == activeInput then
+                        activeInput = nil
+                        if connEnded then connEnded:Disconnect() end
+                    end
+                end)
+            end
+        end)
+    end
+
+    for _, obj in ipairs(hitTargets) do
+        Bind(obj)
+    end
+
+    UserInputService.InputChanged:Connect(function(input)
+        if activeInput == nil then
             return
         end
         local isMatch = (input == activeInput)
@@ -80,16 +146,7 @@ local function MakeDraggable(handle, frame, options)
         if not isMatch then
             return
         end
-        local delta = input.Position - startInputPos
-        if delta.Magnitude > threshold then
-            moved = true
-        end
-        frame.Position = UDim2.new(
-            startFramePos.X.Scale,
-            startFramePos.X.Offset + delta.X,
-            startFramePos.Y.Scale,
-            startFramePos.Y.Offset + delta.Y
-        )
+        onInputMove(input)
     end)
 end
 
@@ -116,13 +173,7 @@ local function CloseAllOverlays()
     CloseAllOverlaysExcept(nil)
 end
 
-local function PointInsideGui(guiObject, x, y)
-    local pos = guiObject.AbsolutePosition
-    local size = guiObject.AbsoluteSize
-    return x >= pos.X and x <= pos.X + size.X and y >= pos.Y and y <= pos.Y + size.Y
-end
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+UserInputService.InputBegan:Connect(function(input)
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
         return
     end
@@ -145,7 +196,7 @@ local function CreateElementFactory(context)
     local Factory = {}
 
     function Factory.Label(parent, text)
-        local label = NewInstance("TextLabel", {
+        return NewInstance("TextLabel", {
             Name = "Label_" .. text,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 20),
@@ -156,7 +207,99 @@ local function CreateElementFactory(context)
             Text = text,
             Parent = parent,
         })
-        return label
+    end
+
+    function Factory.Paragraph(parent, config)
+        config = config or {}
+        local title = config.Title
+        local text = config.Text or ""
+
+        local row = NewInstance("Frame", {
+            Name = "Paragraph",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Parent = parent,
+        })
+
+        local layout = NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 2),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = row,
+        })
+
+        if title then
+            NewInstance("TextLabel", {
+                Name = "Title",
+                BackgroundTransparency = 1,
+                AutomaticSize = Enum.AutomaticSize.Y,
+                Size = UDim2.new(1, 0, 0, 0),
+                Font = Enum.Font.GothamBold,
+                TextSize = 14,
+                TextColor3 = Color3.fromRGB(210, 210, 210),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextWrapped = true,
+                Text = title,
+                Parent = row,
+            })
+        end
+
+        local body = NewInstance("TextLabel", {
+            Name = "Body",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(160, 160, 160),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            Text = text,
+            Parent = row,
+        })
+
+        local api = {}
+        function api.SetText(newText)
+            body.Text = newText
+        end
+        return api
+    end
+
+    function Factory.Section(parent, text)
+        local row = NewInstance("Frame", {
+            Name = "Section_" .. tostring(text),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 18),
+            Parent = parent,
+        })
+
+        local titleLabel = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 0, 1, 0),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextColor3 = Accent.Value,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.upper(text or ""),
+            Parent = row,
+        })
+
+        Accent.Changed:Connect(function(color)
+            titleLabel.TextColor3 = color
+        end)
+
+        local line = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, 0, 0.5, 0),
+            Size = UDim2.new(1, -68, 0, 1),
+            BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        return row
     end
 
     function Factory.Toggle(parent, config)
@@ -173,7 +316,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, -48, 1, 0),
             Font = Enum.Font.Gotham,
@@ -196,8 +338,14 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
+        local boxStroke = NewInstance("UIStroke", {
+            Color = Accent.Value,
+            Transparency = default and 0.3 or 1,
+            Thickness = 1,
+            Parent = box,
+        })
+
         local fill = NewInstance("Frame", {
-            Name = "Fill",
             Size = UDim2.fromScale(1, 1),
             BackgroundColor3 = Accent.Value,
             BorderSizePixel = 0,
@@ -209,15 +357,19 @@ local function CreateElementFactory(context)
 
         local function ApplyVisual(animated)
             local goal = { BackgroundTransparency = state and 0 or 1 }
+            local strokeGoal = { Transparency = state and 0.3 or 1 }
             if animated then
                 TweenService:Create(fill, TweenInfo.new(0.15), goal):Play()
+                TweenService:Create(boxStroke, TweenInfo.new(0.15), strokeGoal):Play()
             else
                 fill.BackgroundTransparency = goal.BackgroundTransparency
+                boxStroke.Transparency = strokeGoal.Transparency
             end
         end
 
         Accent.Changed:Connect(function(color)
             fill.BackgroundColor3 = color
+            boxStroke.Color = color
         end)
 
         box.MouseButton1Click:Connect(function()
@@ -256,7 +408,6 @@ local function CreateElementFactory(context)
         })
 
         local label = NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 18),
             Font = Enum.Font.Gotham,
@@ -268,7 +419,6 @@ local function CreateElementFactory(context)
         })
 
         local track = NewInstance("Frame", {
-            Name = "Track",
             Position = UDim2.fromOffset(0, 23),
             Size = UDim2.new(1, 0, 0, 8),
             BackgroundColor3 = Color3.fromRGB(20, 20, 20),
@@ -279,7 +429,6 @@ local function CreateElementFactory(context)
         local fillRatio = Clamp01((default - min) / (max - min))
 
         local fill = NewInstance("Frame", {
-            Name = "Fill",
             Size = UDim2.new(fillRatio, 0, 1, 0),
             BackgroundColor3 = Accent.Value,
             BorderSizePixel = 0,
@@ -287,7 +436,6 @@ local function CreateElementFactory(context)
         })
 
         local knob = NewInstance("Frame", {
-            Name = "Knob",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(fillRatio, 0, 0.5, 0),
             Size = UDim2.fromOffset(13, 18),
@@ -302,7 +450,6 @@ local function CreateElementFactory(context)
         end)
 
         local currentValue = default
-        local activeInput = nil
 
         local function ApplyValue(value, fromUser)
             value = math.clamp(value, min, max)
@@ -324,37 +471,10 @@ local function CreateElementFactory(context)
             ApplyValue(min + (max - min) * ratio, true)
         end
 
-        local function BeginSlider(input)
-            activeInput = input
+        MakeValueDragger({ knob, track }, function(input)
             UpdateFromX(input.Position.X)
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End and activeInput == input then
-                    activeInput = nil
-                end
-            end)
-        end
-
-        knob.InputBegan:Connect(function(input)
-            if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not activeInput then
-                BeginSlider(input)
-            end
-        end)
-
-        track.InputBegan:Connect(function(input)
-            if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not activeInput then
-                BeginSlider(input)
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if not activeInput then
-                return
-            end
-            local isMatch = (input == activeInput)
-                or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
-            if isMatch then
-                UpdateFromX(input.Position.X)
-            end
+        end, function(input)
+            UpdateFromX(input.Position.X)
         end)
 
         local api = {}
@@ -386,7 +506,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = btn,
@@ -409,22 +528,340 @@ local function CreateElementFactory(context)
         return api
     end
 
+    function Factory.ProgressBar(parent, config)
+        config = config or {}
+        local name = config.Name or "Progress"
+        local min = config.Min or 0
+        local max = config.Max or 100
+        local default = config.Default or min
+
+        local row = NewInstance("Frame", {
+            Name = "ProgressBar_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 36),
+            Parent = parent,
+        })
+
+        local label = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local track = NewInstance("Frame", {
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 8),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        local ratio = Clamp01((default - min) / (max - min))
+
+        local fill = NewInstance("Frame", {
+            Size = UDim2.new(ratio, 0, 1, 0),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Parent = track,
+        })
+
+        Accent.Changed:Connect(function(color)
+            fill.BackgroundColor3 = color
+        end)
+
+        local currentValue = default
+
+        local api = {}
+        function api.Set(value)
+            currentValue = math.clamp(value, min, max)
+            local newRatio = (max > min) and Clamp01((currentValue - min) / (max - min)) or 0
+            TweenService:Create(fill, TweenInfo.new(0.2), { Size = UDim2.new(newRatio, 0, 1, 0) }):Play()
+        end
+        function api.Get()
+            return currentValue
+        end
+        return api
+    end
+
+    function Factory.Image(parent, config)
+        config = config or {}
+        local id = config.Id or ""
+        local height = config.Height or 120
+
+        local holder = NewInstance("Frame", {
+            Name = "Image",
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, height),
+            Parent = parent,
+        })
+
+        NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = holder,
+        })
+
+        local image = NewInstance("ImageLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            Image = id,
+            ScaleType = Enum.ScaleType.Crop,
+            Parent = holder,
+        })
+
+        local api = {}
+        function api.Set(newId)
+            image.Image = newId
+        end
+        return api
+    end
+
     function Factory.Dropdown(parent, config)
         config = config or {}
         local name = config.Name or "Dropdown"
         local options = config.Options or {}
         local default = config.Default or options[1]
         local callback = config.Callback
+        local maxVisible = config.MaxVisible or 6
 
         local row = NewInstance("Frame", {
             Name = "Dropdown_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 50),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local box = NewInstance("TextButton", {
+            Name = "Box",
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 28),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = "  " .. tostring(default),
+            Parent = row,
+        })
+
+        local boxStroke = NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = box,
+        })
+
+        local arrow = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(16, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextColor3 = Accent.Value,
+            Text = "\u{25BC}",
+            Parent = box,
+        })
+
+        local isOpen = false
+
+        Accent.Changed:Connect(function(color)
+            arrow.TextColor3 = color
+            if isOpen then
+                boxStroke.Color = color
+            end
+        end)
+
+        local optionsHolder = NewInstance("Frame", {
+            Name = "DropdownOptionsHolder_" .. name,
+            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(0, 28),
+            Visible = false,
+            ClipsDescendants = true,
+            ZIndex = 200,
+            Parent = ScreenGui,
+        })
+
+        NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = optionsHolder,
+        })
+
+        local scroll = NewInstance("ScrollingFrame", {
+            Name = "Scroll",
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 1),
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Color3.fromRGB(120, 120, 120),
+            ScrollBarImageTransparency = 0.4,
+            ZIndex = optionsHolder.ZIndex + 1,
+            Parent = optionsHolder,
+        })
+
+        NewInstance("UIListLayout", {
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = scroll,
+        })
+
+        local currentValue = default
+        local optionButtons = {}
+
+        local function HighlightSelected()
+            for opt, btn in pairs(optionButtons) do
+                if opt == currentValue then
+                    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                    btn.TextColor3 = Accent.Value
+                else
+                    btn.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+                    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+                end
+            end
+        end
+
+        local function Close()
+            isOpen = false
+            optionsHolder.Visible = false
+            boxStroke.Color = Color3.fromRGB(60, 60, 60)
+            arrow.Text = "\u{25BC}"
+        end
+
+        local function RebuildOptions()
+            for _, child in ipairs(scroll:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child:Destroy()
+                end
+            end
+            optionButtons = {}
+            for index, opt in ipairs(options) do
+                local optBtn = NewInstance("TextButton", {
+                    Name = "Option_" .. tostring(opt),
+                    BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+                    BorderSizePixel = 0,
+                    AutoButtonColor = false,
+                    Size = UDim2.new(1, 0, 0, 28),
+                    Font = Enum.Font.Gotham,
+                    TextSize = 13,
+                    TextColor3 = Color3.fromRGB(200, 200, 200),
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    Text = "   " .. tostring(opt),
+                    LayoutOrder = index,
+                    ZIndex = scroll.ZIndex + 1,
+                    Parent = scroll,
+                })
+
+                optionButtons[opt] = optBtn
+
+                optBtn.MouseEnter:Connect(function()
+                    if opt ~= currentValue then
+                        optBtn.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
+                    end
+                end)
+                optBtn.MouseLeave:Connect(function()
+                    if opt ~= currentValue then
+                        optBtn.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+                    end
+                end)
+                optBtn.MouseButton1Click:Connect(function()
+                    currentValue = opt
+                    box.Text = "  " .. tostring(opt)
+                    HighlightSelected()
+                    Close()
+                    if callback then
+                        callback(opt)
+                    end
+                end)
+            end
+            HighlightSelected()
+        end
+
+        RebuildOptions()
+
+        local function Open()
+            CloseAllOverlaysExcept(optionsHolder)
+            local boxPos = box.AbsolutePosition
+            local boxSize = box.AbsoluteSize
+            local visible = math.min(#options, maxVisible)
+            local panelHeight = math.max(visible, 1) * 28
+            optionsHolder.Size = UDim2.fromOffset(boxSize.X, panelHeight)
+            local x, y = ClampOpenPosition(boxPos.X, boxPos.Y + boxSize.Y + 2, boxSize.X, panelHeight)
+            optionsHolder.Position = UDim2.fromOffset(x, y)
+            optionsHolder.Visible = true
+            isOpen = true
+            boxStroke.Color = Accent.Value
+            arrow.Text = "\u{25B2}"
+            HighlightSelected()
+        end
+
+        box.MouseButton1Click:Connect(function()
+            if isOpen then
+                Close()
+            else
+                Open()
+            end
+        end)
+
+        RegisterOverlay(optionsHolder, box, function() return isOpen end, Close)
+
+        local api = {}
+        function api.Set(value)
+            currentValue = value
+            box.Text = "  " .. tostring(value)
+            HighlightSelected()
+        end
+        function api.Get()
+            return currentValue
+        end
+        function api.SetOptions(newOptions)
+            options = newOptions
+            RebuildOptions()
+        end
+        return api
+    end
+
+    function Factory.MultiDropdown(parent, config)
+        config = config or {}
+        local name = config.Name or "Dropdown"
+        local options = config.Options or {}
+        local default = config.Default or {}
+        local callback = config.Callback
+
+        local selected = {}
+        for _, opt in ipairs(default) do
+            selected[opt] = true
+        end
+
+        local row = NewInstance("Frame", {
+            Name = "MultiDropdown_" .. name,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 46),
             Parent = parent,
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 16),
             Font = Enum.Font.Gotham,
@@ -446,19 +883,22 @@ local function CreateElementFactory(context)
             TextSize = 13,
             TextColor3 = Color3.fromRGB(220, 220, 220),
             TextXAlignment = Enum.TextXAlignment.Left,
-            Text = "  " .. tostring(default),
+            Text = "",
             Parent = row,
         })
 
         NewInstance("UIStroke", {
-            Name = "BoxStroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = box,
         })
 
+        NewInstance("UIPadding", {
+            PaddingLeft = UDim.new(0, 6),
+            Parent = box,
+        })
+
         local arrow = NewInstance("TextLabel", {
-            Name = "Arrow",
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -8, 0.5, 0),
@@ -466,7 +906,7 @@ local function CreateElementFactory(context)
             Font = Enum.Font.GothamBold,
             TextSize = 12,
             TextColor3 = Accent.Value,
-            Text = "▼",
+            Text = "v",
             Parent = box,
         })
 
@@ -475,7 +915,7 @@ local function CreateElementFactory(context)
         end)
 
         local optionsHolder = NewInstance("Frame", {
-            Name = "DropdownOptionsHolder_" .. name,
+            Name = "MultiDropdownOptionsHolder_" .. name,
             BackgroundColor3 = Color3.fromRGB(16, 16, 16),
             BorderSizePixel = 0,
             Size = UDim2.fromOffset(0, #options * 24),
@@ -485,20 +925,37 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "OptionsStroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = optionsHolder,
         })
 
         NewInstance("UIListLayout", {
-            Name = "OptionsLayout",
             SortOrder = Enum.SortOrder.LayoutOrder,
             Parent = optionsHolder,
         })
 
-        local currentValue = default
         local isOpen = false
+
+        local function RefreshBoxText()
+            local count = 0
+            local first = nil
+            for opt, isSelected in pairs(selected) do
+                if isSelected then
+                    count = count + 1
+                    first = first or opt
+                end
+            end
+            if count == 0 then
+                box.Text = "None"
+            elseif count == 1 then
+                box.Text = tostring(first)
+            else
+                box.Text = tostring(first) .. " +" .. tostring(count - 1)
+            end
+        end
+
+        local checkMarks = {}
 
         local function Close()
             isOpen = false
@@ -507,45 +964,74 @@ local function CreateElementFactory(context)
 
         local function RebuildOptions()
             for _, child in ipairs(optionsHolder:GetChildren()) do
-                if child:IsA("TextButton") then
+                if child:IsA("Frame") and child.Name ~= "Layout" then
                     child:Destroy()
                 end
             end
+            checkMarks = {}
             for _, opt in ipairs(options) do
-                local optBtn = NewInstance("TextButton", {
+                local optRow = NewInstance("Frame", {
                     Name = "Option_" .. tostring(opt),
                     BackgroundColor3 = Color3.fromRGB(16, 16, 16),
                     BorderSizePixel = 0,
-                    AutoButtonColor = false,
                     Size = UDim2.new(1, 0, 0, 24),
+                    ZIndex = optionsHolder.ZIndex + 1,
+                    Parent = optionsHolder,
+                })
+
+                local optBtn = NewInstance("TextButton", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromScale(1, 1),
                     Font = Enum.Font.Gotham,
                     TextSize = 13,
                     TextColor3 = Color3.fromRGB(200, 200, 200),
                     TextXAlignment = Enum.TextXAlignment.Left,
                     Text = "  " .. tostring(opt),
-                    ZIndex = optionsHolder.ZIndex + 1,
-                    Parent = optionsHolder,
+                    ZIndex = optRow.ZIndex + 1,
+                    Parent = optRow,
                 })
+
+                local check = NewInstance("Frame", {
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, -6, 0.5, 0),
+                    Size = UDim2.fromOffset(12, 12),
+                    BackgroundColor3 = Accent.Value,
+                    BorderSizePixel = 0,
+                    Visible = selected[opt] == true,
+                    ZIndex = optRow.ZIndex + 1,
+                    Parent = optRow,
+                })
+
+                checkMarks[opt] = check
+
                 optBtn.MouseButton1Click:Connect(function()
-                    currentValue = opt
-                    box.Text = "  " .. tostring(opt)
-                    Close()
+                    selected[opt] = not selected[opt]
+                    check.Visible = selected[opt] == true
+                    RefreshBoxText()
                     if callback then
-                        callback(opt)
+                        callback(selected)
                     end
                 end)
             end
-            optionsHolder.Size = UDim2.fromOffset(optionsHolder.AbsoluteSize.X, #options * 24)
         end
 
         RebuildOptions()
+        RefreshBoxText()
+
+        Accent.Changed:Connect(function(color)
+            for _, check in pairs(checkMarks) do
+                check.BackgroundColor3 = color
+            end
+        end)
 
         local function Open()
             CloseAllOverlaysExcept(optionsHolder)
             local boxPos = box.AbsolutePosition
             local boxSize = box.AbsoluteSize
-            optionsHolder.Position = UDim2.fromOffset(boxPos.X, boxPos.Y + boxSize.Y + 2)
             optionsHolder.Size = UDim2.fromOffset(boxSize.X, #options * 24)
+            local panelSize = optionsHolder.AbsoluteSize
+            local x, y = ClampOpenPosition(boxPos.X, boxPos.Y + boxSize.Y + 2, panelSize.X, panelSize.Y)
+            optionsHolder.Position = UDim2.fromOffset(x, y)
             optionsHolder.Visible = true
             isOpen = true
         end
@@ -561,16 +1047,24 @@ local function CreateElementFactory(context)
         RegisterOverlay(optionsHolder, box, function() return isOpen end, Close)
 
         local api = {}
-        function api.Set(value)
-            currentValue = value
-            box.Text = "  " .. tostring(value)
-        end
         function api.Get()
-            return currentValue
+            local result = {}
+            for opt, isSelected in pairs(selected) do
+                if isSelected then
+                    table.insert(result, opt)
+                end
+            end
+            return result
         end
-        function api.SetOptions(newOptions)
-            options = newOptions
-            RebuildOptions()
+        function api.Set(newSelected)
+            selected = {}
+            for _, opt in ipairs(newSelected) do
+                selected[opt] = true
+            end
+            for opt, check in pairs(checkMarks) do
+                check.Visible = selected[opt] == true
+            end
+            RefreshBoxText()
         end
         return api
     end
@@ -589,7 +1083,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, -48, 1, 0),
             Font = Enum.Font.Gotham,
@@ -613,7 +1106,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
             Color = Color3.fromRGB(80, 80, 80),
             Thickness = 1,
             Parent = swatch,
@@ -626,62 +1118,65 @@ local function CreateElementFactory(context)
             Name = "ColorPickerPanel_" .. name,
             BackgroundColor3 = Color3.fromRGB(16, 16, 16),
             BorderSizePixel = 0,
-            Size = UDim2.fromOffset(180, 190),
+            Size = UDim2.fromOffset(180, 204),
             Visible = false,
             ZIndex = 200,
             Parent = ScreenGui,
         })
 
         NewInstance("UIStroke", {
-            Name = "PanelStroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = panel,
         })
 
-        local pickerHeader = NewInstance("Frame", {
-            Name = "Header",
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+        local panelHandle = NewInstance("Frame", {
+            BackgroundColor3 = Color3.fromRGB(24, 24, 24),
             BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, 20),
+            Size = UDim2.new(1, 0, 0, 22),
             ZIndex = panel.ZIndex + 1,
             Parent = panel,
         })
 
-        local pickerHeaderTitle = NewInstance("TextLabel", {
-            Name = "HeaderTitle",
+        NewInstance("TextLabel", {
             BackgroundTransparency = 1,
             Position = UDim2.fromOffset(8, 0),
-            Size = UDim2.new(1, -16, 1, 0),
-            Font = Enum.Font.GothamBold,
+            Size = UDim2.new(1, -32, 1, 0),
+            Font = Enum.Font.GothamMedium,
             TextSize = 12,
-            TextColor3 = Accent.Value,
+            TextColor3 = Color3.fromRGB(180, 180, 180),
             TextXAlignment = Enum.TextXAlignment.Left,
             Text = name,
-            ZIndex = pickerHeader.ZIndex + 1,
-            Parent = pickerHeader,
+            ZIndex = panelHandle.ZIndex + 1,
+            Parent = panelHandle,
         })
 
-        Accent.Changed:Connect(function(color)
-            pickerHeaderTitle.TextColor3 = color
-        end)
-
-        MakeDraggable(pickerHeader, panel)
+        local closeBtn = NewInstance("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -4, 0.5, 0),
+            Size = UDim2.fromOffset(18, 18),
+            BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(180, 180, 180),
+            Text = "x",
+            ZIndex = panelHandle.ZIndex + 1,
+            Parent = panelHandle,
+        })
 
         local svMap = NewInstance("ImageButton", {
             Name = "SVMap",
-            Position = UDim2.fromOffset(10, 28),
+            Position = UDim2.fromOffset(10, 32),
             Size = UDim2.fromOffset(160, 110),
             BackgroundColor3 = Color3.fromHSV(h, 1, 1),
             BorderSizePixel = 0,
             AutoButtonColor = false,
-            Image = "",
             ZIndex = panel.ZIndex + 1,
             Parent = panel,
         })
 
         local svWhiteOverlay = NewInstance("Frame", {
-            Name = "WhiteOverlay",
             Size = UDim2.fromScale(1, 1),
             BackgroundColor3 = Color3.new(1, 1, 1),
             BorderSizePixel = 0,
@@ -690,14 +1185,11 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIGradient", {
-            Name = "WhiteGradient",
-            Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(1, 1, 1)),
             Transparency = NumberSequence.new(0, 1),
             Parent = svWhiteOverlay,
         })
 
         local svBlackOverlay = NewInstance("Frame", {
-            Name = "BlackOverlay",
             Size = UDim2.fromScale(1, 1),
             BackgroundColor3 = Color3.new(0, 0, 0),
             BorderSizePixel = 0,
@@ -706,15 +1198,12 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIGradient", {
-            Name = "BlackGradient",
             Rotation = 90,
-            Color = ColorSequence.new(Color3.new(0, 0, 0), Color3.new(0, 0, 0)),
             Transparency = NumberSequence.new(1, 0),
             Parent = svBlackOverlay,
         })
 
         local svCursor = NewInstance("Frame", {
-            Name = "SVCursor",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Size = UDim2.fromOffset(8, 8),
             BackgroundColor3 = Color3.new(1, 1, 1),
@@ -725,15 +1214,13 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "CursorStroke",
             Color = Color3.new(0, 0, 0),
             Thickness = 1.5,
             Parent = svCursor,
         })
 
         local hueTrack = NewInstance("Frame", {
-            Name = "HueTrack",
-            Position = UDim2.fromOffset(10, 148),
+            Position = UDim2.fromOffset(10, 154),
             Size = UDim2.fromOffset(160, 14),
             BorderSizePixel = 0,
             ZIndex = panel.ZIndex + 1,
@@ -744,14 +1231,13 @@ local function CreateElementFactory(context)
         for i = 0, 10 do
             table.insert(hueSequence, ColorSequenceKeypoint.new(i / 10, Color3.fromHSV(i / 10, 1, 1)))
         end
+
         NewInstance("UIGradient", {
-            Name = "HueGradient",
             Color = ColorSequence.new(hueSequence),
             Parent = hueTrack,
         })
 
         local hueCursor = NewInstance("Frame", {
-            Name = "HueCursor",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(h, 0, 0.5, 0),
             Size = UDim2.fromOffset(4, 18),
@@ -762,16 +1248,14 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "HueCursorStroke",
             Color = Color3.new(0, 0, 0),
             Thickness = 1,
             Parent = hueCursor,
         })
 
         local hexBox = NewInstance("TextBox", {
-            Name = "HexBox",
-            Position = UDim2.fromOffset(10, 168),
-            Size = UDim2.fromOffset(160, 14),
+            Position = UDim2.fromOffset(10, 178),
+            Size = UDim2.fromOffset(160, 16),
             BackgroundColor3 = Color3.fromRGB(26, 26, 26),
             BorderSizePixel = 0,
             Font = Enum.Font.Code,
@@ -784,8 +1268,6 @@ local function CreateElementFactory(context)
         })
 
         local isOpen = false
-        local draggingSV = false
-        local draggingHue = false
 
         local function ApplyColor(fromUser)
             currentColor = Color3.fromHSV(h, s, v)
@@ -814,42 +1296,21 @@ local function CreateElementFactory(context)
             ApplyColor(true)
         end
 
-        svMap.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingSV = true
-                SetSV(input.Position.X, input.Position.Y)
-            end
+        MakeValueDragger({ svMap }, function(input)
+            SetSV(input.Position.X, input.Position.Y)
+        end, function(input)
+            SetSV(input.Position.X, input.Position.Y)
         end)
 
-        hueTrack.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingHue = true
-                SetHue(input.Position.X)
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                if draggingSV then
-                    SetSV(input.Position.X, input.Position.Y)
-                elseif draggingHue then
-                    SetHue(input.Position.X)
-                end
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingSV = false
-                draggingHue = false
-            end
+        MakeValueDragger({ hueTrack }, function(input)
+            SetHue(input.Position.X)
+        end, function(input)
+            SetHue(input.Position.X)
         end)
 
         hexBox.FocusLost:Connect(function()
             local hex = hexBox.Text:gsub("#", "")
-            local ok, color = pcall(function()
-                return Color3.fromHex(hex)
-            end)
+            local ok, color = pcall(Color3.fromHex, hex)
             if ok then
                 h, s, v = Color3.toHSV(color)
                 svCursor.Position = UDim2.new(s, 0, 1 - v, 0)
@@ -869,7 +1330,11 @@ local function CreateElementFactory(context)
             CloseAllOverlaysExcept(panel)
             local swatchPos = swatch.AbsolutePosition
             local swatchSize = swatch.AbsoluteSize
-            panel.Position = UDim2.fromOffset(swatchPos.X - 180 + swatchSize.X, swatchPos.Y + swatchSize.Y + 4)
+            local panelSize = panel.AbsoluteSize
+            local x = swatchPos.X - panelSize.X + swatchSize.X
+            local y = swatchPos.Y + swatchSize.Y + 4
+            x, y = ClampOpenPosition(x, y, panelSize.X, panelSize.Y)
+            panel.Position = UDim2.fromOffset(x, y)
             panel.Visible = true
             isOpen = true
         end
@@ -881,6 +1346,10 @@ local function CreateElementFactory(context)
                 Open()
             end
         end)
+
+        closeBtn.MouseButton1Click:Connect(Close)
+
+        MakeDraggable(panelHandle, panel)
 
         RegisterOverlay(panel, swatch, function() return isOpen end, Close)
 
@@ -912,7 +1381,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 16),
             Font = Enum.Font.Gotham,
@@ -924,7 +1392,6 @@ local function CreateElementFactory(context)
         })
 
         local box = NewInstance("TextBox", {
-            Name = "Box",
             Position = UDim2.fromOffset(0, 20),
             Size = UDim2.new(1, 0, 0, 20),
             BackgroundColor3 = Color3.fromRGB(20, 20, 20),
@@ -941,7 +1408,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = box,
@@ -983,7 +1449,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, -90, 1, 0),
             Font = Enum.Font.Gotham,
@@ -995,7 +1460,6 @@ local function CreateElementFactory(context)
         })
 
         local box = NewInstance("TextButton", {
-            Name = "Box",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, 0, 0.5, 0),
             Size = UDim2.fromOffset(84, 20),
@@ -1010,7 +1474,6 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = box,
@@ -1024,7 +1487,7 @@ local function CreateElementFactory(context)
             box.Text = "..."
         end)
 
-        UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        UserInputService.InputBegan:Connect(function(input)
             if not listening then
                 return
             end
@@ -1049,596 +1512,41 @@ local function CreateElementFactory(context)
         return api
     end
 
-    function Factory.Section(parent, text)
-        local holder = NewInstance("Frame", {
-            Name = "Section_" .. text,
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 22),
-            Parent = parent,
-        })
-
-        NewInstance("TextLabel", {
-            Name = "Title",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 16),
-            Font = Enum.Font.GothamBold,
-            TextSize = 13,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = string.upper(text),
-            Parent = holder,
-        })
-
-        local underline = NewInstance("Frame", {
-            Name = "Underline",
-            Position = UDim2.fromOffset(0, 20),
-            Size = UDim2.new(1, 0, 0, 1),
-            BackgroundColor3 = Accent.Value,
-            BorderSizePixel = 0,
-            Parent = holder,
-        })
-
-        Accent.Changed:Connect(function(color)
-            underline.BackgroundColor3 = color
-        end)
-
-        return holder
-    end
-
     function Factory.Divider(parent)
-        local holder = NewInstance("Frame", {
+        return NewInstance("Frame", {
             Name = "Divider",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 8),
-            Parent = parent,
-        })
-
-        NewInstance("Frame", {
-            Name = "Line",
-            AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(0, 0, 0.5, 0),
             Size = UDim2.new(1, 0, 0, 1),
-            BackgroundColor3 = Color3.fromRGB(60, 60, 60),
+            BackgroundColor3 = Color3.fromRGB(45, 45, 45),
             BorderSizePixel = 0,
-            Parent = holder,
-        })
-
-        return holder
-    end
-
-    function Factory.Paragraph(parent, config)
-        config = config or {}
-        local title = config.Title or "Paragraph"
-        local body = config.Body or config.Text or ""
-
-        local holder = NewInstance("Frame", {
-            Name = "Paragraph_" .. title,
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
             Parent = parent,
         })
-
-        NewInstance("UIListLayout", {
-            Padding = UDim.new(0, 2),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = holder,
-        })
-
-        NewInstance("TextLabel", {
-            Name = "Title",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 16),
-            Font = Enum.Font.GothamBold,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = title,
-            LayoutOrder = 1,
-            Parent = holder,
-        })
-
-        local bodyLabel = NewInstance("TextLabel", {
-            Name = "Body",
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-            Font = Enum.Font.Gotham,
-            TextSize = 13,
-            TextColor3 = Color3.fromRGB(160, 160, 160),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextYAlignment = Enum.TextYAlignment.Top,
-            TextWrapped = true,
-            Text = body,
-            LayoutOrder = 2,
-            Parent = holder,
-        })
-
-        local api = {}
-        function api.SetText(text)
-            bodyLabel.Text = text
-        end
-        function api.Set(text)
-            bodyLabel.Text = text
-        end
-        function api.Get()
-            return bodyLabel.Text
-        end
-        return api
     end
 
-    function Factory.MultiDropdown(parent, config)
-        config = config or {}
-        local name = config.Name or "Dropdown"
-        local options = config.Options or {}
-        local callback = config.Callback
-
-        local selected = {}
-        if config.Default then
-            for _, item in ipairs(config.Default) do
-                selected[item] = true
-            end
-        end
-
-        local row = NewInstance("Frame", {
-            Name = "MultiDropdown_" .. name,
+    function Factory.Spacer(parent, height)
+        return NewInstance("Frame", {
+            Name = "Spacer",
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 46),
+            Size = UDim2.new(1, 0, 0, height or 8),
             Parent = parent,
         })
-
-        NewInstance("TextLabel", {
-            Name = "Label",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 16),
-            Font = Enum.Font.Gotham,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = name,
-            Parent = row,
-        })
-
-        local box = NewInstance("TextButton", {
-            Name = "Box",
-            Position = UDim2.fromOffset(0, 20),
-            Size = UDim2.new(1, 0, 0, 24),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Font = Enum.Font.Gotham,
-            TextSize = 13,
-            TextColor3 = Color3.fromRGB(220, 220, 220),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Text = "  ...",
-            Parent = row,
-        })
-
-        NewInstance("UIStroke", {
-            Name = "BoxStroke",
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = box,
-        })
-
-        local arrow = NewInstance("TextLabel", {
-            Name = "Arrow",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -8, 0.5, 0),
-            Size = UDim2.fromOffset(16, 16),
-            Font = Enum.Font.GothamBold,
-            TextSize = 12,
-            TextColor3 = Accent.Value,
-            Text = "▼",
-            Parent = box,
-        })
-
-        Accent.Changed:Connect(function(color)
-            arrow.TextColor3 = color
-        end)
-
-        local optionsHolder = NewInstance("Frame", {
-            Name = "MultiOptionsHolder_" .. name,
-            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(0, #options * 24),
-            Visible = false,
-            ZIndex = 200,
-            Parent = ScreenGui,
-        })
-
-        NewInstance("UIStroke", {
-            Name = "OptionsStroke",
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = optionsHolder,
-        })
-
-        NewInstance("UIListLayout", {
-            Name = "OptionsLayout",
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = optionsHolder,
-        })
-
-        local isOpen = false
-        local optionChecks = {}
-
-        local function SelectedList()
-            local list = {}
-            for _, opt in ipairs(options) do
-                if selected[opt] then
-                    table.insert(list, opt)
-                end
-            end
-            return list
-        end
-
-        local function UpdateBoxText()
-            local list = SelectedList()
-            if #list == 0 then
-                box.Text = "  ..."
-            else
-                box.Text = "  " .. table.concat(list, ", ")
-            end
-        end
-
-        local function Close()
-            isOpen = false
-            optionsHolder.Visible = false
-        end
-
-        local function RebuildOptions()
-            for _, child in ipairs(optionsHolder:GetChildren()) do
-                if child:IsA("TextButton") then
-                    child:Destroy()
-                end
-            end
-            optionChecks = {}
-            for _, opt in ipairs(options) do
-                local optBtn = NewInstance("TextButton", {
-                    Name = "Option_" .. tostring(opt),
-                    BackgroundColor3 = Color3.fromRGB(16, 16, 16),
-                    BorderSizePixel = 0,
-                    AutoButtonColor = false,
-                    Size = UDim2.new(1, 0, 0, 24),
-                    Font = Enum.Font.Gotham,
-                    TextSize = 13,
-                    TextColor3 = Color3.fromRGB(200, 200, 200),
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = "  " .. tostring(opt),
-                    ZIndex = optionsHolder.ZIndex + 1,
-                    Parent = optionsHolder,
-                })
-
-                local check = NewInstance("Frame", {
-                    Name = "Check",
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    Position = UDim2.new(1, -8, 0.5, 0),
-                    Size = UDim2.fromOffset(10, 10),
-                    BackgroundColor3 = Accent.Value,
-                    BorderSizePixel = 0,
-                    BackgroundTransparency = selected[opt] and 0 or 1,
-                    ZIndex = optBtn.ZIndex + 1,
-                    Parent = optBtn,
-                })
-
-                NewInstance("UIStroke", {
-                    Color = Color3.fromRGB(80, 80, 80),
-                    Thickness = 1,
-                    Parent = check,
-                })
-
-                Accent.Changed:Connect(function(color)
-                    check.BackgroundColor3 = color
-                end)
-
-                optionChecks[opt] = check
-
-                optBtn.MouseButton1Click:Connect(function()
-                    selected[opt] = not selected[opt]
-                    check.BackgroundTransparency = selected[opt] and 0 or 1
-                    UpdateBoxText()
-                    if callback then
-                        callback(SelectedList())
-                    end
-                end)
-            end
-            optionsHolder.Size = UDim2.fromOffset(optionsHolder.AbsoluteSize.X, #options * 24)
-        end
-
-        RebuildOptions()
-        UpdateBoxText()
-
-        local function Open()
-            CloseAllOverlaysExcept(optionsHolder)
-            local boxPos = box.AbsolutePosition
-            local boxSize = box.AbsoluteSize
-            optionsHolder.Position = UDim2.fromOffset(boxPos.X, boxPos.Y + boxSize.Y + 2)
-            optionsHolder.Size = UDim2.fromOffset(boxSize.X, #options * 24)
-            optionsHolder.Visible = true
-            isOpen = true
-        end
-
-        box.MouseButton1Click:Connect(function()
-            if isOpen then
-                Close()
-            else
-                Open()
-            end
-        end)
-
-        RegisterOverlay(optionsHolder, box, function() return isOpen end, Close)
-
-        local api = {}
-        function api.Set(values)
-            selected = {}
-            for _, item in ipairs(values or {}) do
-                selected[item] = true
-            end
-            for opt, check in pairs(optionChecks) do
-                check.BackgroundTransparency = selected[opt] and 0 or 1
-            end
-            UpdateBoxText()
-        end
-        function api.Get()
-            return SelectedList()
-        end
-        function api.SetOptions(newOptions)
-            options = newOptions
-            RebuildOptions()
-            UpdateBoxText()
-        end
-        return api
     end
 
-    function Factory.ProgressBar(parent, config)
+    function Factory.Checkbox(parent, config)
         config = config or {}
-        local name = config.Name or "Progress"
-        local default = config.Default or 0
-
-        local row = NewInstance("Frame", {
-            Name = "ProgressBar_" .. name,
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 38),
-            Parent = parent,
-        })
-
-        local label = NewInstance("TextLabel", {
-            Name = "Label",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 18),
-            Font = Enum.Font.Gotham,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = name .. ": " .. tostring(math.floor(Clamp01(default) * 100)) .. "%",
-            Parent = row,
-        })
-
-        local track = NewInstance("Frame", {
-            Name = "Track",
-            Position = UDim2.fromOffset(0, 23),
-            Size = UDim2.new(1, 0, 0, 8),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
-            BorderSizePixel = 0,
-            Parent = row,
-        })
-
-        local fill = NewInstance("Frame", {
-            Name = "Fill",
-            Size = UDim2.new(Clamp01(default), 0, 1, 0),
-            BackgroundColor3 = Accent.Value,
-            BorderSizePixel = 0,
-            Parent = track,
-        })
-
-        Accent.Changed:Connect(function(color)
-            fill.BackgroundColor3 = color
-        end)
-
-        local current = Clamp01(default)
-
-        local api = {}
-        function api.Set(value)
-            current = Clamp01(value)
-            TweenService:Create(fill, TweenInfo.new(0.2), { Size = UDim2.new(current, 0, 1, 0) }):Play()
-            label.Text = name .. ": " .. tostring(math.floor(current * 100)) .. "%"
-        end
-        function api.Get()
-            return current
-        end
-        return api
-    end
-
-    function Factory.Image(parent, config)
-        config = config or {}
-        local image = config.Image or ""
-        local height = config.Height or 80
-
-        local holder = NewInstance("Frame", {
-            Name = "Image",
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
-            BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, height),
-            Parent = parent,
-        })
-
-        NewInstance("UIStroke", {
-            Name = "Stroke",
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = holder,
-        })
-
-        local img = NewInstance("ImageLabel", {
-            Name = "Img",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.new(1, -8, 1, -8),
-            Image = image,
-            ScaleType = Enum.ScaleType.Fit,
-            Parent = holder,
-        })
-
-        local api = {}
-        function api.SetImage(id)
-            img.Image = id
-        end
-        function api.Set(id)
-            img.Image = id
-        end
-        return api
-    end
-
-    function Factory.Space(parent, height)
-        height = height or 8
-        local holder = NewInstance("Frame", {
-            Name = "Space",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, height),
-            Parent = parent,
-        })
-        local api = {}
-        function api.SetHeight(h)
-            holder.Size = UDim2.new(1, 0, 0, h)
-        end
-        return api
-    end
-
-    function Factory.Stat(parent, config)
-        config = config or {}
-        local name = config.Name or "Stat"
-        local default = config.Default or ""
-
-        local row = NewInstance("Frame", {
-            Name = "Stat_" .. name,
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 22),
-            Parent = parent,
-        })
-
-        NewInstance("TextLabel", {
-            Name = "Label",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(0.5, 0, 1, 0),
-            Font = Enum.Font.Gotham,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = name,
-            Parent = row,
-        })
-
-        local value = NewInstance("TextLabel", {
-            Name = "Value",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, 0, 0, 0),
-            Size = UDim2.new(0.5, 0, 1, 0),
-            Font = Enum.Font.GothamMedium,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(150, 150, 150),
-            TextXAlignment = Enum.TextXAlignment.Right,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Text = tostring(default),
-            Parent = row,
-        })
-
-        local api = {}
-        function api.Set(text)
-            value.Text = tostring(text)
-        end
-        function api.Get()
-            return value.Text
-        end
-        return api
-    end
-
-    function Factory.Indicator(parent, config)
-        config = config or {}
-        local name = config.Name or "Status"
+        local name = config.Name or "Checkbox"
         local default = config.Default or false
-        local onColor = config.OnColor or Color3.fromRGB(60, 200, 90)
-        local offColor = config.OffColor or Color3.fromRGB(70, 70, 70)
-
-        local row = NewInstance("Frame", {
-            Name = "Indicator_" .. name,
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 22),
-            Parent = parent,
-        })
-
-        NewInstance("TextLabel", {
-            Name = "Label",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, -22, 1, 0),
-            Font = Enum.Font.Gotham,
-            TextSize = 14,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = name,
-            Parent = row,
-        })
-
-        local dot = NewInstance("Frame", {
-            Name = "Dot",
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, 0, 0.5, 0),
-            Size = UDim2.fromOffset(12, 12),
-            BackgroundColor3 = default and onColor or offColor,
-            BorderSizePixel = 0,
-            Parent = row,
-        })
-
-        NewInstance("UICorner", {
-            CornerRadius = UDim.new(1, 0),
-            Parent = dot,
-        })
-
-        NewInstance("UIStroke", {
-            Color = Color3.fromRGB(0, 0, 0),
-            Thickness = 1,
-            Transparency = 0.5,
-            Parent = dot,
-        })
-
-        local state = default
-
-        local api = {}
-        function api.Set(value)
-            state = value
-            dot.BackgroundColor3 = value and onColor or offColor
-        end
-        function api.SetColor(color)
-            dot.BackgroundColor3 = color
-        end
-        function api.Get()
-            return state
-        end
-        return api
-    end
-
-    function Factory.ToggleKeybind(parent, config)
-        config = config or {}
-        local name = config.Name or "Toggle"
-        local default = config.Default or false
-        local defaultKey = config.Key
         local callback = config.Callback
 
         local row = NewInstance("Frame", {
-            Name = "ToggleKeybind_" .. name,
+            Name = "Checkbox_" .. name,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 26),
             Parent = parent,
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, -116, 1, 0),
+            Size = UDim2.new(1, -32, 1, 0),
             Font = Enum.Font.Gotham,
             TextSize = 14,
             TextColor3 = Color3.fromRGB(200, 200, 200),
@@ -1647,94 +1555,64 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
-        local keyBox = NewInstance("TextButton", {
-            Name = "KeyBox",
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -28, 0.5, 0),
-            Size = UDim2.fromOffset(78, 20),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Font = Enum.Font.Gotham,
-            TextSize = 12,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
-            Text = FormatKeycodeName(defaultKey),
-            Parent = row,
-        })
-
-        NewInstance("UIStroke", {
-            Name = "KeyStroke",
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = keyBox,
-        })
-
         local box = NewInstance("TextButton", {
-            Name = "Box",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, 0, 0.5, 0),
-            Size = UDim2.fromOffset(20, 20),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            Size = UDim2.fromOffset(18, 18),
+            BackgroundColor3 = default and Accent.Value or Color3.fromRGB(20, 20, 20),
+            BackgroundTransparency = default and 0 or 1,
             BorderSizePixel = 0,
             AutoButtonColor = false,
             Text = "",
             Parent = row,
         })
 
-        local fill = NewInstance("Frame", {
-            Name = "Fill",
-            Size = UDim2.fromScale(1, 1),
-            BackgroundColor3 = Accent.Value,
-            BorderSizePixel = 0,
-            BackgroundTransparency = default and 0 or 1,
+        NewInstance("UICorner", {
+            CornerRadius = UDim.new(0, 4),
             Parent = box,
         })
 
-        Accent.Changed:Connect(function(color)
-            fill.BackgroundColor3 = color
-        end)
+        local boxStroke = NewInstance("UIStroke", {
+            Color = default and Accent.Value or Color3.fromRGB(70, 70, 70),
+            Thickness = 1,
+            Parent = box,
+        })
+
+        local check = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(20, 20, 20),
+            Text = "\u{2713}",
+            Visible = default,
+            Parent = box,
+        })
 
         local state = default
-        local currentKey = defaultKey
-        local listening = false
 
         local function ApplyVisual(animated)
-            local goal = { BackgroundTransparency = state and 0 or 1 }
+            check.Visible = state
+            local bgGoal = { BackgroundTransparency = state and 0 or 1 }
+            boxStroke.Color = state and Accent.Value or Color3.fromRGB(70, 70, 70)
+            box.BackgroundColor3 = Accent.Value
             if animated then
-                TweenService:Create(fill, TweenInfo.new(0.15), goal):Play()
+                TweenService:Create(box, TweenInfo.new(0.12), bgGoal):Play()
             else
-                fill.BackgroundTransparency = goal.BackgroundTransparency
+                box.BackgroundTransparency = bgGoal.BackgroundTransparency
             end
         end
 
-        local function SetState(value, animated)
-            state = value
-            ApplyVisual(animated)
-            if callback then
-                callback(state)
-            end
-        end
+        Accent.Changed:Connect(function(color)
+            box.BackgroundColor3 = color
+            boxStroke.Color = state and color or Color3.fromRGB(70, 70, 70)
+        end)
 
         box.MouseButton1Click:Connect(function()
-            SetState(not state, true)
-        end)
-
-        keyBox.MouseButton1Click:Connect(function()
-            listening = true
-            keyBox.Text = "..."
-        end)
-
-        UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if listening then
-                if input.UserInputType == Enum.UserInputType.Keyboard then
-                    currentKey = input.KeyCode
-                    keyBox.Text = FormatKeycodeName(currentKey)
-                    listening = false
-                end
-                return
-            end
-            if not gameProcessed and currentKey and input.KeyCode == currentKey then
-                SetState(not state, true)
+            state = not state
+            ApplyVisual(true)
+            if callback then
+                callback(state)
             end
         end)
 
@@ -1746,35 +1624,25 @@ local function CreateElementFactory(context)
         function api.Get()
             return state
         end
-        function api.SetKey(keycode)
-            currentKey = keycode
-            keyBox.Text = FormatKeycodeName(keycode)
-        end
-        function api.GetKey()
-            return currentKey
-        end
         return api
     end
 
-    function Factory.Input(parent, config)
+    function Factory.Switch(parent, config)
         config = config or {}
-        local name = config.Name or "Input"
-        local default = config.Default or 0
-        local minValue = config.Min
-        local maxValue = config.Max
+        local name = config.Name or "Switch"
+        local default = config.Default or false
         local callback = config.Callback
 
         local row = NewInstance("Frame", {
-            Name = "Input_" .. name,
+            Name = "Switch_" .. name,
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 40),
+            Size = UDim2.new(1, 0, 0, 26),
             Parent = parent,
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 16),
+            Size = UDim2.new(1, -52, 1, 0),
             Font = Enum.Font.Gotham,
             TextSize = 14,
             TextColor3 = Color3.fromRGB(200, 200, 200),
@@ -1783,61 +1651,173 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
-        local box = NewInstance("TextBox", {
-            Name = "Box",
-            Position = UDim2.fromOffset(0, 20),
-            Size = UDim2.new(1, 0, 0, 20),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+        local track = NewInstance("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, 0, 0.5, 0),
+            Size = UDim2.fromOffset(40, 20),
+            BackgroundColor3 = default and Accent.Value or Color3.fromRGB(45, 45, 45),
             BorderSizePixel = 0,
-            Font = Enum.Font.Gotham,
-            TextSize = 13,
-            TextColor3 = Color3.fromRGB(220, 220, 220),
-            PlaceholderText = "0",
-            PlaceholderColor3 = Color3.fromRGB(110, 110, 110),
-            ClearTextOnFocus = false,
-            Text = tostring(default),
-            TextXAlignment = Enum.TextXAlignment.Left,
+            AutoButtonColor = false,
+            Text = "",
             Parent = row,
         })
 
-        NewInstance("UIStroke", {
-            Name = "Stroke",
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = box,
+        NewInstance("UICorner", {
+            CornerRadius = UDim.new(1, 0),
+            Parent = track,
         })
 
-        NewInstance("UIPadding", {
-            PaddingLeft = UDim.new(0, 6),
-            PaddingRight = UDim.new(0, 6),
-            Parent = box,
+        local knob = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = default and UDim2.new(1, -11, 0.5, 0) or UDim2.new(0, 11, 0.5, 0),
+            Size = UDim2.fromOffset(14, 14),
+            BackgroundColor3 = Color3.fromRGB(240, 240, 240),
+            BorderSizePixel = 0,
+            Parent = track,
         })
 
-        local currentValue = default
+        NewInstance("UICorner", {
+            CornerRadius = UDim.new(1, 0),
+            Parent = knob,
+        })
 
-        box.FocusLost:Connect(function()
-            local num = tonumber(box.Text)
-            if num == nil then
-                box.Text = tostring(currentValue)
-                return
+        local state = default
+
+        local function ApplyVisual(animated)
+            local knobGoal = { Position = state and UDim2.new(1, -11, 0.5, 0) or UDim2.new(0, 11, 0.5, 0) }
+            local trackGoal = { BackgroundColor3 = state and Accent.Value or Color3.fromRGB(45, 45, 45) }
+            if animated then
+                TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Quad), knobGoal):Play()
+                TweenService:Create(track, TweenInfo.new(0.15), trackGoal):Play()
+            else
+                knob.Position = knobGoal.Position
+                track.BackgroundColor3 = trackGoal.BackgroundColor3
             end
-            if minValue ~= nil then
-                num = math.max(num, minValue)
+        end
+
+        Accent.Changed:Connect(function()
+            if state then
+                track.BackgroundColor3 = Accent.Value
             end
-            if maxValue ~= nil then
-                num = math.min(num, maxValue)
-            end
-            currentValue = num
-            box.Text = tostring(num)
+        end)
+
+        track.MouseButton1Click:Connect(function()
+            state = not state
+            ApplyVisual(true)
             if callback then
-                callback(num)
+                callback(state)
             end
         end)
 
         local api = {}
         function api.Set(value)
+            state = value
+            ApplyVisual(false)
+        end
+        function api.Get()
+            return state
+        end
+        return api
+    end
+
+    function Factory.Segmented(parent, config)
+        config = config or {}
+        local name = config.Name
+        local options = config.Options or {}
+        local default = config.Default or options[1]
+        local callback = config.Callback
+
+        local hasLabel = name ~= nil
+        local row = NewInstance("Frame", {
+            Name = "Segmented_" .. tostring(name),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, hasLabel and 46 or 26),
+            Parent = parent,
+        })
+
+        if hasLabel then
+            NewInstance("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 16),
+                Font = Enum.Font.Gotham,
+                TextSize = 14,
+                TextColor3 = Color3.fromRGB(200, 200, 200),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Text = name,
+                Parent = row,
+            })
+        end
+
+        local bar = NewInstance("Frame", {
+            Position = UDim2.fromOffset(0, hasLabel and 20 or 0),
+            Size = UDim2.new(1, 0, 0, 24),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = bar,
+        })
+
+        NewInstance("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            Parent = bar,
+        })
+
+        local currentValue = default
+        local segButtons = {}
+
+        local function Highlight()
+            for opt, btn in pairs(segButtons) do
+                if opt == currentValue then
+                    btn.BackgroundColor3 = Accent.Value
+                    btn.BackgroundTransparency = 0.15
+                    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
+                else
+                    btn.BackgroundTransparency = 1
+                    btn.TextColor3 = Color3.fromRGB(190, 190, 190)
+                end
+            end
+        end
+
+        local count = #options
+        for index, opt in ipairs(options) do
+            local segBtn = NewInstance("TextButton", {
+                Name = "Seg_" .. tostring(opt),
+                BackgroundColor3 = Accent.Value,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                AutoButtonColor = false,
+                Size = UDim2.new(1 / count, 0, 1, 0),
+                Font = Enum.Font.GothamMedium,
+                TextSize = 12,
+                TextColor3 = Color3.fromRGB(190, 190, 190),
+                Text = tostring(opt),
+                LayoutOrder = index,
+                Parent = bar,
+            })
+            segButtons[opt] = segBtn
+            segBtn.MouseButton1Click:Connect(function()
+                currentValue = opt
+                Highlight()
+                if callback then
+                    callback(opt)
+                end
+            end)
+        end
+
+        Accent.Changed:Connect(Highlight)
+        Highlight()
+
+        local api = {}
+        function api.Set(value)
             currentValue = value
-            box.Text = tostring(value)
+            Highlight()
         end
         function api.Get()
             return currentValue
@@ -1845,105 +1825,613 @@ local function CreateElementFactory(context)
         return api
     end
 
-    function Factory.Console(parent, config)
+    function Factory.RadioGroup(parent, config)
         config = config or {}
-        local title = config.Name or config.Title
-        local height = config.Height or 96
+        local name = config.Name
+        local options = config.Options or {}
+        local default = config.Default or options[1]
+        local callback = config.Callback
 
-        local holder = NewInstance("Frame", {
-            Name = "Console",
+        local row = NewInstance("Frame", {
+            Name = "RadioGroup_" .. tostring(name),
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, height + (title and 18 or 0)),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
             Parent = parent,
         })
 
-        local offsetY = 0
-        if title then
+        local layout = NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = row,
+        })
+
+        if name then
             NewInstance("TextLabel", {
-                Name = "Title",
                 BackgroundTransparency = 1,
                 Size = UDim2.new(1, 0, 0, 16),
                 Font = Enum.Font.Gotham,
                 TextSize = 14,
                 TextColor3 = Color3.fromRGB(200, 200, 200),
                 TextXAlignment = Enum.TextXAlignment.Left,
-                Text = title,
-                Parent = holder,
+                Text = name,
+                Parent = row,
             })
-            offsetY = 18
         end
 
-        local frame = NewInstance("Frame", {
-            Name = "Frame",
-            Position = UDim2.fromOffset(0, offsetY),
-            Size = UDim2.new(1, 0, 0, height),
-            BackgroundColor3 = Color3.fromRGB(14, 14, 14),
+        local currentValue = default
+        local dots = {}
+
+        local function SelectOption(opt)
+            currentValue = opt
+            for optName, dot in pairs(dots) do
+                dot.Visible = (optName == opt)
+            end
+        end
+
+        for _, opt in ipairs(options) do
+            local optRow = NewInstance("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 20),
+                Parent = row,
+            })
+
+            local optBtn = NewInstance("TextButton", {
+                BackgroundTransparency = 1,
+                Size = UDim2.fromScale(1, 1),
+                Text = "",
+                AutoButtonColor = false,
+                Parent = optRow,
+            })
+
+            NewInstance("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, -24, 1, 0),
+                Font = Enum.Font.Gotham,
+                TextSize = 13,
+                TextColor3 = Color3.fromRGB(190, 190, 190),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Text = tostring(opt),
+                Parent = optRow,
+            })
+
+            local ring = NewInstance("Frame", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.fromOffset(16, 16),
+                BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+                BorderSizePixel = 0,
+                Parent = optRow,
+            })
+
+            NewInstance("UICorner", {
+                CornerRadius = UDim.new(1, 0),
+                Parent = ring,
+            })
+
+            NewInstance("UIStroke", {
+                Color = Color3.fromRGB(70, 70, 70),
+                Thickness = 1,
+                Parent = ring,
+            })
+
+            local dot = NewInstance("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.5),
+                Size = UDim2.fromOffset(8, 8),
+                BackgroundColor3 = Accent.Value,
+                BorderSizePixel = 0,
+                Visible = (opt == default),
+                Parent = ring,
+            })
+
+            NewInstance("UICorner", {
+                CornerRadius = UDim.new(1, 0),
+                Parent = dot,
+            })
+
+            dots[opt] = dot
+
+            optBtn.MouseButton1Click:Connect(function()
+                SelectOption(opt)
+                if callback then
+                    callback(opt)
+                end
+            end)
+        end
+
+        Accent.Changed:Connect(function(color)
+            for _, dot in pairs(dots) do
+                dot.BackgroundColor3 = color
+            end
+        end)
+
+        local api = {}
+        function api.Set(value)
+            SelectOption(value)
+        end
+        function api.Get()
+            return currentValue
+        end
+        return api
+    end
+
+    function Factory.Stepper(parent, config)
+        config = config or {}
+        local name = config.Name or "Stepper"
+        local min = config.Min or 0
+        local max = config.Max or 100
+        local step = config.Step or 1
+        local default = config.Default or min
+        local callback = config.Callback
+
+        local row = NewInstance("Frame", {
+            Name = "Stepper_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 26),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -110, 1, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local controls = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, 0, 0.5, 0),
+            Size = UDim2.fromOffset(100, 22),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
             BorderSizePixel = 0,
-            Parent = holder,
+            Parent = row,
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
-            Parent = frame,
+            Parent = controls,
         })
 
-        local scroll = NewInstance("ScrollingFrame", {
-            Name = "Scroll",
+        local minusBtn = NewInstance("TextButton", {
+            Size = UDim2.new(0, 26, 1, 0),
             BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            Text = "-",
+            Parent = controls,
+        })
+
+        local valueLabel = NewInstance("TextLabel", {
+            Position = UDim2.new(0, 26, 0, 0),
+            Size = UDim2.new(1, -52, 1, 0),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            Text = tostring(default),
+            Parent = controls,
+        })
+
+        local plusBtn = NewInstance("TextButton", {
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.new(0, 26, 1, 0),
+            BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            Text = "+",
+            Parent = controls,
+        })
+
+        local currentValue = default
+
+        local function SetValue(value, fromUser)
+            currentValue = math.clamp(value, min, max)
+            valueLabel.Text = tostring(currentValue)
+            if fromUser and callback then
+                callback(currentValue)
+            end
+        end
+
+        local function FlashButton(btn)
+            TweenService:Create(btn, TweenInfo.new(0.08), { TextColor3 = Accent.Value }):Play()
+            task.delay(0.12, function()
+                TweenService:Create(btn, TweenInfo.new(0.15), { TextColor3 = Color3.fromRGB(200, 200, 200) }):Play()
+            end)
+        end
+
+        minusBtn.MouseButton1Click:Connect(function()
+            SetValue(currentValue - step, true)
+            FlashButton(minusBtn)
+        end)
+
+        plusBtn.MouseButton1Click:Connect(function()
+            SetValue(currentValue + step, true)
+            FlashButton(plusBtn)
+        end)
+
+        local api = {}
+        function api.Set(value)
+            SetValue(value, false)
+        end
+        function api.Get()
+            return currentValue
+        end
+        return api
+    end
+
+    function Factory.RangeSlider(parent, config)
+        config = config or {}
+        local name = config.Name or "Range"
+        local min = config.Min or 0
+        local max = config.Max or 100
+        local defaultLow = config.DefaultLow or min
+        local defaultHigh = config.DefaultHigh or max
+        local step = config.Step or 1
+        local callback = config.Callback
+
+        local row = NewInstance("Frame", {
+            Name = "RangeSlider_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 38),
+            Parent = parent,
+        })
+
+        local label = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 18),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name .. ": " .. tostring(defaultLow) .. " - " .. tostring(defaultHigh),
+            Parent = row,
+        })
+
+        local track = NewInstance("Frame", {
+            Position = UDim2.fromOffset(0, 23),
+            Size = UDim2.new(1, 0, 0, 8),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
             BorderSizePixel = 0,
-            Size = UDim2.fromScale(1, 1),
-            CanvasSize = UDim2.new(0, 0, 0, 0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ScrollingDirection = Enum.ScrollingDirection.Y,
-            ScrollBarThickness = 4,
-            ScrollBarImageColor3 = Color3.fromRGB(120, 120, 120),
-            ScrollBarImageTransparency = 0.3,
-            ClipsDescendants = true,
-            Parent = frame,
+            Parent = row,
+        })
+
+        local lowRatio = Clamp01((defaultLow - min) / (max - min))
+        local highRatio = Clamp01((defaultHigh - min) / (max - min))
+
+        local fill = NewInstance("Frame", {
+            Position = UDim2.new(lowRatio, 0, 0, 0),
+            Size = UDim2.new(highRatio - lowRatio, 0, 1, 0),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Parent = track,
+        })
+
+        local lowKnob = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(lowRatio, 0, 0.5, 0),
+            Size = UDim2.fromOffset(13, 18),
+            BackgroundColor3 = Color3.fromRGB(230, 230, 230),
+            BorderSizePixel = 0,
+            ZIndex = track.ZIndex + 1,
+            Parent = track,
+        })
+
+        local highKnob = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(highRatio, 0, 0.5, 0),
+            Size = UDim2.fromOffset(13, 18),
+            BackgroundColor3 = Color3.fromRGB(230, 230, 230),
+            BorderSizePixel = 0,
+            ZIndex = track.ZIndex + 1,
+            Parent = track,
+        })
+
+        Accent.Changed:Connect(function(color)
+            fill.BackgroundColor3 = color
+        end)
+
+        local currentLow = defaultLow
+        local currentHigh = defaultHigh
+
+        local function ApplyRange(fromUser)
+            local lr = Clamp01((currentLow - min) / (max - min))
+            local hr = Clamp01((currentHigh - min) / (max - min))
+            fill.Position = UDim2.new(lr, 0, 0, 0)
+            fill.Size = UDim2.new(hr - lr, 0, 1, 0)
+            lowKnob.Position = UDim2.new(lr, 0, 0.5, 0)
+            highKnob.Position = UDim2.new(hr, 0, 0.5, 0)
+            label.Text = name .. ": " .. tostring(currentLow) .. " - " .. tostring(currentHigh)
+            if fromUser and callback then
+                callback(currentLow, currentHigh)
+            end
+        end
+
+        local function UpdateLow(xPos)
+            local trackPos = track.AbsolutePosition.X
+            local trackSize = track.AbsoluteSize.X
+            local ratio = Clamp01((xPos - trackPos) / trackSize)
+            local value = RoundTo(min + (max - min) * ratio, step)
+            currentLow = math.min(value, currentHigh)
+            ApplyRange(true)
+        end
+
+        local function UpdateHigh(xPos)
+            local trackPos = track.AbsolutePosition.X
+            local trackSize = track.AbsoluteSize.X
+            local ratio = Clamp01((xPos - trackPos) / trackSize)
+            local value = RoundTo(min + (max - min) * ratio, step)
+            currentHigh = math.max(value, currentLow)
+            ApplyRange(true)
+        end
+
+        MakeValueDragger({ lowKnob }, function(input)
+            UpdateLow(input.Position.X)
+        end, function(input)
+            UpdateLow(input.Position.X)
+        end)
+
+        MakeValueDragger({ highKnob }, function(input)
+            UpdateHigh(input.Position.X)
+        end, function(input)
+            UpdateHigh(input.Position.X)
+        end)
+
+        local api = {}
+        function api.Set(low, high)
+            currentLow = math.clamp(low, min, max)
+            currentHigh = math.clamp(high, min, max)
+            ApplyRange(false)
+        end
+        function api.Get()
+            return currentLow, currentHigh
+        end
+        return api
+    end
+
+    function Factory.KeyValue(parent, config)
+        config = config or {}
+        local key = config.Key or ""
+        local value = config.Value or ""
+
+        local row = NewInstance("Frame", {
+            Name = "KeyValue_" .. key,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 20),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0.5, 0, 1, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(160, 160, 160),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = key,
+            Parent = row,
+        })
+
+        local valueLabel = NewInstance("TextLabel", {
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.new(0.5, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            TextXAlignment = Enum.TextXAlignment.Right,
+            Text = tostring(value),
+            Parent = row,
+        })
+
+        local api = {}
+        function api.Set(newValue)
+            valueLabel.Text = tostring(newValue)
+        end
+        return api
+    end
+
+    function Factory.Badge(parent, config)
+        config = config or {}
+        local name = config.Name or "Status"
+        local text = config.Text or "Active"
+        local color = config.Color or Accent.Value
+
+        local row = NewInstance("Frame", {
+            Name = "Badge_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 24),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -90, 1, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local pill = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, 0, 0.5, 0),
+            Size = UDim2.fromOffset(0, 18),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundColor3 = color,
+            BackgroundTransparency = 0.8,
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        NewInstance("UICorner", {
+            CornerRadius = UDim.new(1, 0),
+            Parent = pill,
+        })
+
+        NewInstance("UIStroke", {
+            Color = color,
+            Thickness = 1,
+            Parent = pill,
+        })
+
+        local label = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(0, 18),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 12,
+            TextColor3 = color,
+            Text = text,
+            Parent = pill,
         })
 
         NewInstance("UIPadding", {
-            PaddingTop = UDim.new(0, 4),
-            PaddingBottom = UDim.new(0, 4),
-            PaddingLeft = UDim.new(0, 6),
-            PaddingRight = UDim.new(0, 6),
-            Parent = scroll,
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8),
+            Parent = pill,
         })
-
-        local text = NewInstance("TextLabel", {
-            Name = "Text",
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-            Font = Enum.Font.Code,
-            TextSize = 12,
-            TextColor3 = Color3.fromRGB(190, 190, 190),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextYAlignment = Enum.TextYAlignment.Top,
-            TextWrapped = true,
-            RichText = false,
-            Text = "",
-            Parent = scroll,
-        })
-
-        local lines = {}
 
         local api = {}
-        function api.Log(message)
-            table.insert(lines, tostring(message))
-            text.Text = table.concat(lines, "\n")
-            task.defer(function()
-                scroll.CanvasPosition = Vector2.new(0, scroll.AbsoluteCanvasSize.Y)
-            end)
+        function api.Set(newText, newColor)
+            label.Text = newText
+            if newColor then
+                pill.BackgroundColor3 = newColor
+                label.TextColor3 = newColor
+            end
         end
-        function api.Clear()
-            lines = {}
-            text.Text = ""
+        return api
+    end
+
+    function Factory.ToggleSlider(parent, config)
+        config = config or {}
+        local name = config.Name or "ToggleSlider"
+        local toggleDefault = config.ToggleDefault or false
+        local min = config.Min or 0
+        local max = config.Max or 100
+        local sliderDefault = config.SliderDefault or min
+        local step = config.Step or 1
+        local toggleCallback = config.ToggleCallback
+        local sliderCallback = config.SliderCallback
+
+        local row = NewInstance("Frame", {
+            Name = "ToggleSlider_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 38),
+            Parent = parent,
+        })
+
+        local label = NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -48, 0, 18),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name .. ": " .. tostring(sliderDefault),
+            Parent = row,
+        })
+
+        local box = NewInstance("TextButton", {
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(20, 18),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Text = "",
+            Parent = row,
+        })
+
+        local toggleFill = NewInstance("Frame", {
+            Size = UDim2.fromScale(1, 1),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            BackgroundTransparency = toggleDefault and 0 or 1,
+            Parent = box,
+        })
+
+        local track = NewInstance("Frame", {
+            Position = UDim2.fromOffset(0, 23),
+            Size = UDim2.new(1, 0, 0, 8),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Parent = row,
+        })
+
+        local fillRatio = Clamp01((sliderDefault - min) / (max - min))
+
+        local sliderFill = NewInstance("Frame", {
+            Size = UDim2.new(fillRatio, 0, 1, 0),
+            BackgroundColor3 = Accent.Value,
+            BorderSizePixel = 0,
+            Parent = track,
+        })
+
+        local knob = NewInstance("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(fillRatio, 0, 0.5, 0),
+            Size = UDim2.fromOffset(13, 18),
+            BackgroundColor3 = Color3.fromRGB(230, 230, 230),
+            BorderSizePixel = 0,
+            ZIndex = track.ZIndex + 1,
+            Parent = track,
+        })
+
+        Accent.Changed:Connect(function(color)
+            toggleFill.BackgroundColor3 = color
+            sliderFill.BackgroundColor3 = color
+        end)
+
+        local toggleState = toggleDefault
+        local sliderValue = sliderDefault
+
+        box.MouseButton1Click:Connect(function()
+            toggleState = not toggleState
+            TweenService:Create(toggleFill, TweenInfo.new(0.15), { BackgroundTransparency = toggleState and 0 or 1 }):Play()
+            if toggleCallback then
+                toggleCallback(toggleState)
+            end
+        end)
+
+        local function UpdateFromX(xPos)
+            local trackPos = track.AbsolutePosition.X
+            local trackSize = track.AbsoluteSize.X
+            local ratio = Clamp01((xPos - trackPos) / trackSize)
+            sliderValue = RoundTo(min + (max - min) * ratio, step)
+            sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+            knob.Position = UDim2.new(ratio, 0, 0.5, 0)
+            label.Text = name .. ": " .. tostring(sliderValue)
+            if sliderCallback then
+                sliderCallback(sliderValue)
+            end
         end
-        function api.Get()
-            return text.Text
+
+        MakeValueDragger({ knob, track }, function(input)
+            UpdateFromX(input.Position.X)
+        end, function(input)
+            UpdateFromX(input.Position.X)
+        end)
+
+        local api = {}
+        function api.GetToggle()
+            return toggleState
+        end
+        function api.GetSlider()
+            return sliderValue
         end
         return api
     end
@@ -1956,14 +2444,13 @@ local function CreateElementFactory(context)
         local callback = config.Callback
 
         local row = NewInstance("Frame", {
-            Name = "SearchDropdown_" .. name,
+            Name = "SearchableDropdown_" .. name,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 46),
             Parent = parent,
         })
 
         NewInstance("TextLabel", {
-            Name = "Label",
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 16),
             Font = Enum.Font.Gotham,
@@ -1975,7 +2462,6 @@ local function CreateElementFactory(context)
         })
 
         local box = NewInstance("TextButton", {
-            Name = "Box",
             Position = UDim2.fromOffset(0, 20),
             Size = UDim2.new(1, 0, 0, 24),
             BackgroundColor3 = Color3.fromRGB(20, 20, 20),
@@ -1990,14 +2476,12 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "BoxStroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = box,
         })
 
         local arrow = NewInstance("TextLabel", {
-            Name = "Arrow",
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -8, 0.5, 0),
@@ -2005,7 +2489,7 @@ local function CreateElementFactory(context)
             Font = Enum.Font.GothamBold,
             TextSize = 12,
             TextColor3 = Accent.Value,
-            Text = "▼",
+            Text = "v",
             Parent = box,
         })
 
@@ -2013,75 +2497,80 @@ local function CreateElementFactory(context)
             arrow.TextColor3 = color
         end)
 
+        local panelHeight = math.min(#options, 5) * 24 + 26
+
         local optionsHolder = NewInstance("Frame", {
-            Name = "SearchOptionsHolder_" .. name,
+            Name = "SearchableDropdownHolder_" .. name,
             BackgroundColor3 = Color3.fromRGB(16, 16, 16),
             BorderSizePixel = 0,
-            Size = UDim2.fromOffset(0, 24),
+            Size = UDim2.fromOffset(0, panelHeight),
             Visible = false,
             ZIndex = 200,
             Parent = ScreenGui,
         })
 
         NewInstance("UIStroke", {
-            Name = "OptionsStroke",
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = optionsHolder,
         })
 
-        NewInstance("UIListLayout", {
-            Name = "OptionsLayout",
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = optionsHolder,
-        })
-
-        local search = NewInstance("TextBox", {
-            Name = "Search",
+        local searchBox = NewInstance("TextBox", {
+            Position = UDim2.fromOffset(4, 4),
+            Size = UDim2.new(1, -8, 0, 20),
             BackgroundColor3 = Color3.fromRGB(26, 26, 26),
             BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, 24),
             Font = Enum.Font.Gotham,
-            TextSize = 13,
+            TextSize = 12,
             TextColor3 = Color3.fromRGB(220, 220, 220),
-            PlaceholderText = "  Search...",
+            PlaceholderText = "Search...",
             PlaceholderColor3 = Color3.fromRGB(110, 110, 110),
             ClearTextOnFocus = false,
             Text = "",
-            TextXAlignment = Enum.TextXAlignment.Left,
-            LayoutOrder = 0,
             ZIndex = optionsHolder.ZIndex + 1,
             Parent = optionsHolder,
         })
 
         NewInstance("UIPadding", {
             PaddingLeft = UDim.new(0, 6),
-            Parent = search,
+            Parent = searchBox,
+        })
+
+        local listHolder = NewInstance("ScrollingFrame", {
+            Position = UDim2.fromOffset(0, 28),
+            Size = UDim2.new(1, 0, 1, -28),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollBarThickness = 0,
+            ZIndex = optionsHolder.ZIndex + 1,
+            Parent = optionsHolder,
+        })
+
+        NewInstance("UIListLayout", {
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = listHolder,
         })
 
         local currentValue = default
         local isOpen = false
-        local visibleCount = 0
 
         local function Close()
             isOpen = false
             optionsHolder.Visible = false
         end
 
-        local function RebuildOptions(filter)
-            for _, child in ipairs(optionsHolder:GetChildren()) do
+        local function RebuildOptions(filterText)
+            for _, child in ipairs(listHolder:GetChildren()) do
                 if child:IsA("TextButton") then
                     child:Destroy()
                 end
             end
-            filter = string.lower(filter or "")
-            local count = 0
+            filterText = (filterText or ""):lower()
             for _, opt in ipairs(options) do
-                local label = string.lower(tostring(opt))
-                if filter == "" or string.find(label, filter, 1, true) then
-                    count = count + 1
+                if filterText == "" or tostring(opt):lower():find(filterText, 1, true) then
                     local optBtn = NewInstance("TextButton", {
-                        Name = "Option_" .. tostring(opt),
                         BackgroundColor3 = Color3.fromRGB(16, 16, 16),
                         BorderSizePixel = 0,
                         AutoButtonColor = false,
@@ -2091,40 +2580,38 @@ local function CreateElementFactory(context)
                         TextColor3 = Color3.fromRGB(200, 200, 200),
                         TextXAlignment = Enum.TextXAlignment.Left,
                         Text = "  " .. tostring(opt),
-                        LayoutOrder = count,
-                        ZIndex = optionsHolder.ZIndex + 1,
-                        Parent = optionsHolder,
+                        ZIndex = listHolder.ZIndex + 1,
+                        Parent = listHolder,
                     })
-                    local captured = opt
                     optBtn.MouseButton1Click:Connect(function()
-                        currentValue = captured
-                        box.Text = "  " .. tostring(captured)
+                        currentValue = opt
+                        box.Text = "  " .. tostring(opt)
                         Close()
                         if callback then
-                            callback(captured)
+                            callback(opt)
                         end
                     end)
                 end
             end
-            visibleCount = count
-            return count
         end
 
-        search:GetPropertyChangedSignal("Text"):Connect(function()
-            local count = RebuildOptions(search.Text)
-            optionsHolder.Size = UDim2.fromOffset(optionsHolder.AbsoluteSize.X, 24 + count * 24)
+        RebuildOptions("")
+
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            RebuildOptions(searchBox.Text)
         end)
 
         local function Open()
             CloseAllOverlaysExcept(optionsHolder)
-            search.Text = ""
-            local count = RebuildOptions("")
             local boxPos = box.AbsolutePosition
             local boxSize = box.AbsoluteSize
-            optionsHolder.Position = UDim2.fromOffset(boxPos.X, boxPos.Y + boxSize.Y + 2)
-            optionsHolder.Size = UDim2.fromOffset(boxSize.X, 24 + count * 24)
+            local panelSize = optionsHolder.AbsoluteSize
+            local x, y = ClampOpenPosition(boxPos.X, boxPos.Y + boxSize.Y + 2, panelSize.X, panelSize.Y)
+            optionsHolder.Position = UDim2.fromOffset(x, y)
+            optionsHolder.Size = UDim2.fromOffset(boxSize.X, panelHeight)
             optionsHolder.Visible = true
             isOpen = true
+            searchBox.Text = ""
         end
 
         box.MouseButton1Click:Connect(function()
@@ -2145,8 +2632,109 @@ local function CreateElementFactory(context)
         function api.Get()
             return currentValue
         end
-        function api.SetOptions(newOptions)
-            options = newOptions
+        return api
+    end
+
+    function Factory.Input(parent, config)
+        config = config or {}
+        local name = config.Name or "Input"
+        local default = config.Default or ""
+        local placeholder = config.Placeholder or ""
+        local numeric = config.Numeric or false
+        local min = config.Min
+        local max = config.Max
+        local callback = config.Callback
+
+        local row = NewInstance("Frame", {
+            Name = "Input_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 40),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local box = NewInstance("TextBox", {
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 20),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            PlaceholderText = placeholder,
+            PlaceholderColor3 = Color3.fromRGB(110, 110, 110),
+            ClearTextOnFocus = false,
+            Text = tostring(default),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = row,
+        })
+
+        if numeric then
+            box.TextWrapped = false
+        end
+
+        local boxStroke = NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = box,
+        })
+
+        NewInstance("UIPadding", {
+            PaddingLeft = UDim.new(0, 6),
+            PaddingRight = UDim.new(0, 6),
+            Parent = box,
+        })
+
+        box.Focused:Connect(function()
+            boxStroke.Color = Accent.Value
+        end)
+
+        box.FocusLost:Connect(function(enterPressed)
+            boxStroke.Color = Color3.fromRGB(60, 60, 60)
+
+            if numeric then
+                local n = tonumber(box.Text)
+                if n == nil then
+                    n = tonumber(default) or 0
+                end
+                if min then n = math.max(n, min) end
+                if max then n = math.min(n, max) end
+                box.Text = tostring(n)
+                if callback then
+                    callback(n, enterPressed)
+                end
+            else
+                if callback then
+                    callback(box.Text, enterPressed)
+                end
+            end
+        end)
+
+        Accent.Changed:Connect(function(color)
+            if box:IsFocused() then
+                boxStroke.Color = color
+            end
+        end)
+
+        local api = {}
+        function api.Set(value)
+            box.Text = tostring(value)
+        end
+        function api.Get()
+            if numeric then
+                return tonumber(box.Text)
+            end
+            return box.Text
         end
         return api
     end
@@ -2154,9 +2742,12 @@ local function CreateElementFactory(context)
     function Factory.Group(parent, config)
         config = config or {}
         local name = config.Name or "Group"
-        local collapsed = config.Collapsed or false
+        local startOpen = config.Open
+        if startOpen == nil then
+            startOpen = true
+        end
 
-        local outer = NewInstance("Frame", {
+        local container = NewInstance("Frame", {
             Name = "Group_" .. name,
             BackgroundColor3 = Color3.fromRGB(18, 18, 18),
             BorderSizePixel = 0,
@@ -2166,114 +2757,176 @@ local function CreateElementFactory(context)
         })
 
         NewInstance("UIStroke", {
-            Name = "Stroke",
-            Color = Color3.fromRGB(60, 60, 60),
+            Color = Color3.fromRGB(50, 50, 50),
             Thickness = 1,
-            Parent = outer,
+            Parent = container,
         })
 
-        NewInstance("UIListLayout", {
-            Name = "Layout",
+        local outerLayout = NewInstance("UIListLayout", {
             SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = outer,
+            Parent = container,
         })
 
-        NewInstance("UIPadding", {
-            PaddingTop = UDim.new(0, 6),
-            PaddingBottom = UDim.new(0, 8),
-            PaddingLeft = UDim.new(0, 8),
-            PaddingRight = UDim.new(0, 8),
-            Parent = outer,
-        })
-
-        local titleBtn = NewInstance("TextButton", {
-            Name = "Title",
+        local header = NewInstance("TextButton", {
+            Name = "Header",
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 20),
             AutoButtonColor = false,
+            Size = UDim2.new(1, 0, 0, 28),
+            Text = "",
+            Parent = container,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -32, 1, 0),
             Font = Enum.Font.GothamBold,
             TextSize = 13,
-            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextColor3 = Color3.fromRGB(210, 210, 210),
             TextXAlignment = Enum.TextXAlignment.Left,
-            Text = string.upper(name),
-            LayoutOrder = 0,
-            Parent = outer,
+            Text = name,
+            Parent = header,
         })
 
-        local arrow = NewInstance("TextLabel", {
-            Name = "Arrow",
-            BackgroundTransparency = 1,
+        local chevron = NewInstance("TextLabel", {
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, 0, 0.5, 0),
+            Position = UDim2.new(1, -8, 0.5, 0),
             Size = UDim2.fromOffset(16, 16),
+            BackgroundTransparency = 1,
             Font = Enum.Font.GothamBold,
             TextSize = 12,
             TextColor3 = Accent.Value,
-            Text = collapsed and "▶" or "▼",
-            Parent = titleBtn,
+            Text = startOpen and "v" or ">",
+            Parent = header,
         })
 
         Accent.Changed:Connect(function(color)
-            arrow.TextColor3 = color
+            chevron.TextColor3 = color
         end)
 
-        local inner = NewInstance("Frame", {
-            Name = "Inner",
+        local body = NewInstance("Frame", {
+            Name = "Body",
             BackgroundTransparency = 1,
             AutomaticSize = Enum.AutomaticSize.Y,
             Size = UDim2.new(1, 0, 0, 0),
-            LayoutOrder = 1,
-            Visible = not collapsed,
-            Parent = outer,
-        })
-
-        NewInstance("UIListLayout", {
-            Name = "InnerLayout",
-            Padding = UDim.new(0, 8),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = inner,
+            Visible = startOpen,
+            Parent = container,
         })
 
         NewInstance("UIPadding", {
-            PaddingTop = UDim.new(0, 6),
-            Parent = inner,
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8),
+            PaddingBottom = UDim.new(0, 10),
+            Parent = body,
         })
 
-        titleBtn.MouseButton1Click:Connect(function()
-            collapsed = not collapsed
-            inner.Visible = not collapsed
-            arrow.Text = collapsed and "▶" or "▼"
+        local bodyLayout = NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 10),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = body,
+        })
+
+        local isOpen = startOpen
+
+        header.MouseButton1Click:Connect(function()
+            isOpen = not isOpen
+            body.Visible = isOpen
+            chevron.Text = isOpen and "v" or ">"
         end)
 
-        local group = {}
-        group.Instance = outer
-        function group:AddLabel(text) return Factory.Label(inner, text) end
-        function group:AddToggle(c) return Factory.Toggle(inner, c) end
-        function group:AddSlider(c) return Factory.Slider(inner, c) end
-        function group:AddButton(c) return Factory.Button(inner, c) end
-        function group:AddDropdown(c) return Factory.Dropdown(inner, c) end
-        function group:AddSearchableDropdown(c) return Factory.SearchableDropdown(inner, c) end
-        function group:AddMultiDropdown(c) return Factory.MultiDropdown(inner, c) end
-        function group:AddColorPicker(c) return Factory.ColorPicker(inner, c) end
-        function group:AddTextbox(c) return Factory.Textbox(inner, c) end
-        function group:AddInput(c) return Factory.Input(inner, c) end
-        function group:AddKeybind(c) return Factory.Keybind(inner, c) end
-        function group:AddToggleKeybind(c) return Factory.ToggleKeybind(inner, c) end
-        function group:AddSection(text) return Factory.Section(inner, text) end
-        function group:AddDivider() return Factory.Divider(inner) end
-        function group:AddSpace(h) return Factory.Space(inner, h) end
-        function group:AddParagraph(c) return Factory.Paragraph(inner, c) end
-        function group:AddProgressBar(c) return Factory.ProgressBar(inner, c) end
-        function group:AddImage(c) return Factory.Image(inner, c) end
-        function group:AddStat(c) return Factory.Stat(inner, c) end
-        function group:AddIndicator(c) return Factory.Indicator(inner, c) end
-        function group:AddConsole(c) return Factory.Console(inner, c) end
-        function group:SetCollapsed(value)
-            collapsed = value
-            inner.Visible = not collapsed
-            arrow.Text = collapsed and "▶" or "▼"
+        local Group = {}
+        Group.Instance = container
+
+        function Group:AddLabel(text)
+            return Factory.Label(body, text)
         end
-        return group
+        function Group:AddParagraph(cfg)
+            return Factory.Paragraph(body, cfg)
+        end
+        function Group:AddSection(text)
+            return Factory.Section(body, text)
+        end
+        function Group:AddToggle(cfg)
+            return Factory.Toggle(body, cfg)
+        end
+        function Group:AddCheckbox(cfg)
+            return Factory.Checkbox(body, cfg)
+        end
+        function Group:AddSlider(cfg)
+            return Factory.Slider(body, cfg)
+        end
+        function Group:AddRangeSlider(cfg)
+            return Factory.RangeSlider(body, cfg)
+        end
+        function Group:AddStepper(cfg)
+            return Factory.Stepper(body, cfg)
+        end
+        function Group:AddButton(cfg)
+            return Factory.Button(body, cfg)
+        end
+        function Group:AddToggleSlider(cfg)
+            return Factory.ToggleSlider(body, cfg)
+        end
+        function Group:AddDropdown(cfg)
+            return Factory.Dropdown(body, cfg)
+        end
+        function Group:AddMultiDropdown(cfg)
+            return Factory.MultiDropdown(body, cfg)
+        end
+        function Group:AddSearchableDropdown(cfg)
+            return Factory.SearchableDropdown(body, cfg)
+        end
+        function Group:AddRadioGroup(cfg)
+            return Factory.RadioGroup(body, cfg)
+        end
+
+        function Group:AddSwitch(cfg)
+            return Factory.Switch(body, cfg)
+        end
+
+        function Group:AddSegmented(cfg)
+            return Factory.Segmented(body, cfg)
+        end
+        function Group:AddColorPicker(cfg)
+            return Factory.ColorPicker(body, cfg)
+        end
+        function Group:AddTextbox(cfg)
+            return Factory.Textbox(body, cfg)
+        end
+        function Group:AddInput(cfg)
+            return Factory.Input(body, cfg)
+        end
+        function Group:AddKeybind(cfg)
+            return Factory.Keybind(body, cfg)
+        end
+        function Group:AddProgressBar(cfg)
+            return Factory.ProgressBar(body, cfg)
+        end
+        function Group:AddImage(cfg)
+            return Factory.Image(body, cfg)
+        end
+        function Group:AddKeyValue(cfg)
+            return Factory.KeyValue(body, cfg)
+        end
+        function Group:AddBadge(cfg)
+            return Factory.Badge(body, cfg)
+        end
+        function Group:AddDivider()
+            return Factory.Divider(body)
+        end
+        function Group:AddSpacer(height)
+            return Factory.Spacer(body, height)
+        end
+        function Group:AddGroup(cfg)
+            return Factory.Group(body, cfg)
+        end
+        function Group:SetOpen(open)
+            isOpen = open
+            body.Visible = isOpen
+            chevron.Text = isOpen and "v" or ">"
+        end
+
+        return Group
     end
 
     return Factory
@@ -2292,9 +2945,7 @@ local function CreateTab(context, tabName, isFirst)
         CanvasSize = UDim2.new(0, 0, 0, 0),
         AutomaticCanvasSize = Enum.AutomaticSize.None,
         ScrollingDirection = Enum.ScrollingDirection.Y,
-        ScrollBarThickness = 8,
-        ScrollBarImageColor3 = Color3.fromRGB(230, 230, 230),
-        ScrollBarImageTransparency = 1,
+        ScrollBarThickness = 0,
         ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
         ClipsDescendants = true,
         Visible = isFirst,
@@ -2303,7 +2954,6 @@ local function CreateTab(context, tabName, isFirst)
     })
 
     local layout = NewInstance("UIListLayout", {
-        Name = "Layout",
         Padding = UDim.new(0, 10),
         SortOrder = Enum.SortOrder.LayoutOrder,
         Parent = scroll,
@@ -2313,7 +2963,7 @@ local function CreateTab(context, tabName, isFirst)
         PaddingTop = UDim.new(0, 6),
         PaddingBottom = UDim.new(0, 14),
         PaddingLeft = UDim.new(0, 4),
-        PaddingRight = UDim.new(0, 14),
+        PaddingRight = UDim.new(0, 4),
         Parent = scroll,
     })
 
@@ -2331,6 +2981,14 @@ local function CreateTab(context, tabName, isFirst)
         return Factory.Label(scroll, text)
     end
 
+    function Tab:AddParagraph(config)
+        return Factory.Paragraph(scroll, config)
+    end
+
+    function Tab:AddSection(text)
+        return Factory.Section(scroll, text)
+    end
+
     function Tab:AddToggle(config)
         return Factory.Toggle(scroll, config)
     end
@@ -2343,8 +3001,20 @@ local function CreateTab(context, tabName, isFirst)
         return Factory.Button(scroll, config)
     end
 
+    function Tab:AddProgressBar(config)
+        return Factory.ProgressBar(scroll, config)
+    end
+
+    function Tab:AddImage(config)
+        return Factory.Image(scroll, config)
+    end
+
     function Tab:AddDropdown(config)
         return Factory.Dropdown(scroll, config)
+    end
+
+    function Tab:AddMultiDropdown(config)
+        return Factory.MultiDropdown(scroll, config)
     end
 
     function Tab:AddColorPicker(config)
@@ -2359,56 +3029,56 @@ local function CreateTab(context, tabName, isFirst)
         return Factory.Keybind(scroll, config)
     end
 
-    function Tab:AddSection(text)
-        return Factory.Section(scroll, text)
-    end
-
     function Tab:AddDivider()
         return Factory.Divider(scroll)
     end
 
-    function Tab:AddParagraph(config)
-        return Factory.Paragraph(scroll, config)
+    function Tab:AddSpacer(height)
+        return Factory.Spacer(scroll, height)
     end
 
-    function Tab:AddMultiDropdown(config)
-        return Factory.MultiDropdown(scroll, config)
+    function Tab:AddCheckbox(config)
+        return Factory.Checkbox(scroll, config)
     end
 
-    function Tab:AddProgressBar(config)
-        return Factory.ProgressBar(scroll, config)
+    function Tab:AddRadioGroup(config)
+        return Factory.RadioGroup(scroll, config)
     end
 
-    function Tab:AddImage(config)
-        return Factory.Image(scroll, config)
+    function Tab:AddSwitch(config)
+        return Factory.Switch(scroll, config)
     end
 
-    function Tab:AddSpace(height)
-        return Factory.Space(scroll, height)
+    function Tab:AddSegmented(config)
+        return Factory.Segmented(scroll, config)
     end
 
-    function Tab:AddStat(config)
-        return Factory.Stat(scroll, config)
+    function Tab:AddStepper(config)
+        return Factory.Stepper(scroll, config)
     end
 
-    function Tab:AddIndicator(config)
-        return Factory.Indicator(scroll, config)
+    function Tab:AddRangeSlider(config)
+        return Factory.RangeSlider(scroll, config)
     end
 
-    function Tab:AddToggleKeybind(config)
-        return Factory.ToggleKeybind(scroll, config)
+    function Tab:AddKeyValue(config)
+        return Factory.KeyValue(scroll, config)
     end
 
-    function Tab:AddInput(config)
-        return Factory.Input(scroll, config)
+    function Tab:AddBadge(config)
+        return Factory.Badge(scroll, config)
     end
 
-    function Tab:AddConsole(config)
-        return Factory.Console(scroll, config)
+    function Tab:AddToggleSlider(config)
+        return Factory.ToggleSlider(scroll, config)
     end
 
     function Tab:AddSearchableDropdown(config)
         return Factory.SearchableDropdown(scroll, config)
+    end
+
+    function Tab:AddInput(config)
+        return Factory.Input(scroll, config)
     end
 
     function Tab:AddGroup(config)
@@ -2680,132 +3350,6 @@ local function CreateWindow(config)
         Accent.Set(color3)
     end
 
-    local notifyHolder = NewInstance("Frame", {
-        Name = "NotifyHolder",
-        AnchorPoint = Vector2.new(1, 1),
-        Position = UDim2.new(1, -10, 1, -10),
-        Size = UDim2.fromOffset(240, 420),
-        BackgroundTransparency = 1,
-        ZIndex = 300,
-        Parent = ScreenGui,
-    })
-
-    NewInstance("UIListLayout", {
-        Name = "NotifyLayout",
-        VerticalAlignment = Enum.VerticalAlignment.Bottom,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
-        Padding = UDim.new(0, 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = notifyHolder,
-    })
-
-    function Window:Notify(config)
-        config = config or {}
-        local title = config.Title or "Notification"
-        local text = config.Text or config.Body or ""
-        local duration = config.Duration or 4
-
-        local card = NewInstance("Frame", {
-            Name = "Notification",
-            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(240, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            ZIndex = notifyHolder.ZIndex + 1,
-            Parent = notifyHolder,
-        })
-
-        NewInstance("UIStroke", {
-            Color = Color3.fromRGB(60, 60, 60),
-            Thickness = 1,
-            Parent = card,
-        })
-
-        local accentBar = NewInstance("Frame", {
-            Name = "AccentBar",
-            BackgroundColor3 = Accent.Value,
-            BorderSizePixel = 0,
-            Size = UDim2.new(0, 3, 1, 0),
-            ZIndex = card.ZIndex + 2,
-            Parent = card,
-        })
-
-        Accent.Changed:Connect(function(color)
-            accentBar.BackgroundColor3 = color
-        end)
-
-        local content = NewInstance("Frame", {
-            Name = "Content",
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-            ZIndex = card.ZIndex + 1,
-            Parent = card,
-        })
-
-        NewInstance("UIPadding", {
-            PaddingTop = UDim.new(0, 8),
-            PaddingBottom = UDim.new(0, 8),
-            PaddingLeft = UDim.new(0, 12),
-            PaddingRight = UDim.new(0, 10),
-            Parent = content,
-        })
-
-        NewInstance("UIListLayout", {
-            Padding = UDim.new(0, 2),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = content,
-        })
-
-        NewInstance("TextLabel", {
-            Name = "Title",
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 16),
-            Font = Enum.Font.GothamBold,
-            TextSize = 14,
-            TextColor3 = Accent.Value,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Text = title,
-            LayoutOrder = 1,
-            ZIndex = content.ZIndex + 1,
-            Parent = content,
-        })
-
-        if text ~= "" then
-            NewInstance("TextLabel", {
-                Name = "Body",
-                BackgroundTransparency = 1,
-                AutomaticSize = Enum.AutomaticSize.Y,
-                Size = UDim2.new(1, 0, 0, 0),
-                Font = Enum.Font.Gotham,
-                TextSize = 13,
-                TextColor3 = Color3.fromRGB(190, 190, 190),
-                TextXAlignment = Enum.TextXAlignment.Left,
-                TextYAlignment = Enum.TextYAlignment.Top,
-                TextWrapped = true,
-                Text = text,
-                LayoutOrder = 2,
-                ZIndex = content.ZIndex + 1,
-                Parent = content,
-            })
-        end
-
-        card.BackgroundTransparency = 1
-        TweenService:Create(card, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
-
-        task.delay(duration, function()
-            if card and card.Parent then
-                local fade = TweenService:Create(card, TweenInfo.new(0.25), { BackgroundTransparency = 1 })
-                fade:Play()
-                fade.Completed:Connect(function()
-                    if card then
-                        card:Destroy()
-                    end
-                end)
-            end
-        end)
-    end
-
     local menuOpen = false
     local animating = false
 
@@ -2887,12 +3431,62 @@ local function CreateWindow(config)
         openButtonStroke.Color = color
     end)
 
-    MakeDraggable(openButton, openButton, {
-        Threshold = 4,
-        OnClick = function()
+    openButton.MouseButton1Click:Connect(function()
+        if not openButton:GetAttribute("WasDragged") then
             Window:Toggle()
-        end,
-    })
+        end
+    end)
+
+    do
+        local DRAG_THRESHOLD = 6
+        local activeInput = nil
+        local startInputPos = nil
+        local startTargetPos = nil
+        local moved = false
+
+        openButton.InputBegan:Connect(function(input)
+            if activeInput ~= nil then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                activeInput = input
+                startInputPos = input.Position
+                startTargetPos = openButton.Position
+                moved = false
+                openButton:SetAttribute("WasDragged", false)
+
+                local connEnded
+                connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+                    if endedInput == activeInput then
+                        activeInput = nil
+                        if connEnded then connEnded:Disconnect() end
+                    end
+                end)
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if activeInput == nil or input ~= activeInput then
+                return
+            end
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            local delta = input.Position - startInputPos
+            if not moved and delta.Magnitude > DRAG_THRESHOLD then
+                moved = true
+                openButton:SetAttribute("WasDragged", true)
+            end
+            if moved then
+                openButton.Position = UDim2.new(
+                    startTargetPos.X.Scale,
+                    startTargetPos.X.Offset + delta.X,
+                    startTargetPos.Y.Scale,
+                    startTargetPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+    end
 
     MakeDraggable(titleBar, mainWindow)
 
