@@ -3508,6 +3508,202 @@ local function CreateWindow(config)
         Parent = notifyHolder,
     })
 
+    local function CreateFloatingButton(cfg, forceToggle)
+        cfg = cfg or {}
+        local isToggle = forceToggle == true or cfg.Toggle == true
+        local minSize = cfg.MinSize or 55
+        local maxSize = cfg.MaxSize or 200
+        local size = math.clamp(cfg.Size or 90, minSize, maxSize)
+        local radius = cfg.Radius or 16
+        local threshold = cfg.DragThreshold or 6
+
+        local state = cfg.Default == true
+
+        local btn = NewInstance("TextButton", {
+            Name = "FloatingButton",
+            Size = UDim2.fromOffset(size, size),
+            Position = cfg.Position or UDim2.new(0.5, -size / 2, 0.6, 0),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Text = cfg.Text or "",
+            TextColor3 = Color3.fromRGB(235, 235, 235),
+            TextScaled = true,
+            TextWrapped = true,
+            Font = Enum.Font.GothamBold,
+            Active = true,
+            Selectable = true,
+            ZIndex = 250,
+            Parent = ScreenGui,
+        })
+
+        NewInstance("UICorner", { CornerRadius = UDim.new(0, radius), Parent = btn })
+
+        NewInstance("UIPadding", {
+            PaddingLeft = UDim.new(0, 6),
+            PaddingRight = UDim.new(0, 6),
+            PaddingTop = UDim.new(0, 6),
+            PaddingBottom = UDim.new(0, 6),
+            Parent = btn,
+        })
+
+        NewInstance("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 8, Parent = btn })
+
+        local inner = NewInstance("Frame", {
+            BackgroundColor3 = Color3.fromRGB(60, 60, 60),
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(1, 1),
+            Size = UDim2.new(1, -2, 1, -2),
+            ZIndex = btn.ZIndex - 1,
+            Parent = btn,
+        })
+        NewInstance("UICorner", { CornerRadius = UDim.new(0, radius), Parent = inner })
+
+        local stroke = NewInstance("UIStroke", {
+            Thickness = 1.5,
+            Color = Accent.Value,
+            Transparency = 0.35,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+            Parent = btn,
+        })
+
+        local handle = {}
+        handle.Button = btn
+
+        local function applyVisual()
+            if isToggle and state then
+                btn.BackgroundColor3 = Accent.Value
+                btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                stroke.Color = Accent.Value
+                stroke.Transparency = 0
+                if cfg.OnText then btn.Text = cfg.OnText end
+            else
+                btn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+                btn.TextColor3 = Color3.fromRGB(235, 235, 235)
+                stroke.Color = Accent.Value
+                stroke.Transparency = 0.35
+                if isToggle and cfg.OffText then btn.Text = cfg.OffText end
+            end
+        end
+
+        applyVisual()
+        Accent.Changed:Connect(applyVisual)
+
+        local activeInput = nil
+        local moved = false
+        local startInputPos, startBtnPos
+
+        btn.InputBegan:Connect(function(input)
+            if activeInput ~= nil then return end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                activeInput = input
+                moved = false
+                startInputPos = input.Position
+                startBtnPos = btn.Position
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if activeInput == nil then return end
+            local isMatch = (input == activeInput)
+                or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
+            if not isMatch then return end
+            local delta = input.Position - startInputPos
+            if delta.Magnitude > threshold then moved = true end
+            btn.Position = UDim2.new(
+                startBtnPos.X.Scale,
+                startBtnPos.X.Offset + delta.X,
+                startBtnPos.Y.Scale,
+                startBtnPos.Y.Offset + delta.Y
+            )
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if activeInput == nil then return end
+            if input == activeInput then
+                activeInput = nil
+                if not moved then
+                    if isToggle then
+                        state = not state
+                        applyVisual()
+                        if cfg.Callback then
+                            local s = state
+                            task.spawn(function() cfg.Callback(s) end)
+                        end
+                    else
+                        if cfg.Callback then task.spawn(cfg.Callback) end
+                    end
+                end
+            end
+        end)
+
+        function handle:SetSize(px)
+            size = math.clamp(px, minSize, maxSize)
+            btn.Size = UDim2.fromOffset(size, size)
+            return size
+        end
+
+        function handle:GetSize()
+            return size
+        end
+
+        function handle:SetText(text)
+            btn.Text = text or ""
+        end
+
+        function handle:SetActive(value)
+            if not isToggle then return end
+            state = value == true
+            applyVisual()
+        end
+
+        function handle:Toggle()
+            if not isToggle then return end
+            self:SetActive(not state)
+        end
+
+        function handle:GetState()
+            return state
+        end
+
+        function handle:SetVisible(value)
+            btn.Visible = value ~= false
+        end
+
+        function handle:SetPosition(udim2)
+            btn.Position = udim2
+        end
+
+        function handle:Destroy()
+            btn:Destroy()
+        end
+
+        function handle:AddSizeSlider(tab, sc)
+            sc = sc or {}
+            return tab:AddSlider({
+                Name = sc.Name or "Button Size",
+                Min = sc.Min or minSize,
+                Max = sc.Max or maxSize,
+                Default = sc.Default or size,
+                Step = sc.Step or 5,
+                Callback = function(v)
+                    handle:SetSize(v)
+                    if sc.Callback then sc.Callback(v) end
+                end,
+            })
+        end
+
+        return handle
+    end
+
+    function Window:AddFloatingButton(cfg)
+        return CreateFloatingButton(cfg, false)
+    end
+
+    function Window:AddFloatingToggle(cfg)
+        return CreateFloatingButton(cfg, true)
+    end
+
     function Window:Notify(cfg)
         cfg = cfg or {}
         local title = cfg.Title or "Notification"
