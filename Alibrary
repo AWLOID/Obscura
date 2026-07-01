@@ -3666,6 +3666,8 @@ local function CreateWindow(config)
                 task.delay(0.05, ClampButton)
             end
         end)
+        btn:GetPropertyChangedSignal("AbsolutePosition"):Connect(ClampButton)
+        btn:GetPropertyChangedSignal("AbsoluteSize"):Connect(ClampButton)
 
         local function applyVisual()
             if isToggle and state then
@@ -3690,43 +3692,7 @@ local function CreateWindow(config)
         local moved = false
         local startInputPos, startBtnPos
 
-        btn.InputBegan:Connect(function(input)
-            if activeInput ~= nil then return end
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                activeInput = input
-                moved = false
-                startInputPos = input.Position
-                startBtnPos = btn.Position
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if activeInput == nil then return end
-            local isMatch = (input == activeInput)
-                or (input.UserInputType == Enum.UserInputType.MouseMovement and activeInput.UserInputType == Enum.UserInputType.MouseButton1)
-            if not isMatch then return end
-            local delta = input.Position - startInputPos
-            if not moved and delta.Magnitude > threshold then moved = true end
-            if moved then
-                btn.Position = UDim2.new(
-                    startBtnPos.X.Scale,
-                    startBtnPos.X.Offset + delta.X,
-                    startBtnPos.Y.Scale,
-                    startBtnPos.Y.Offset + delta.Y
-                )
-                ClampButton()
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if activeInput == nil then return end
-            if input == activeInput
-                or (input.UserInputType == Enum.UserInputType.MouseButton1 and activeInput.UserInputType == Enum.UserInputType.MouseButton1) then
-                activeInput = nil
-            end
-        end)
-
-        btn.Activated:Connect(function()
+        local function DoActivate()
             if moved then return end
             if isToggle then
                 state = not state
@@ -3737,6 +3703,61 @@ local function CreateWindow(config)
                 end
             else
                 if cfg.Callback then task.spawn(cfg.Callback) end
+            end
+        end
+
+        local function MoveTo(pos)
+            local delta = pos - startInputPos
+            if not moved and delta.Magnitude > threshold then moved = true end
+            if moved then
+                btn.Position = UDim2.new(
+                    startBtnPos.X.Scale,
+                    startBtnPos.X.Offset + delta.X,
+                    startBtnPos.Y.Scale,
+                    startBtnPos.Y.Offset + delta.Y
+                )
+                ClampButton()
+            end
+        end
+
+        btn.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            activeInput = input
+            moved = false
+            startInputPos = input.Position
+            startBtnPos = btn.Position
+
+            if input.UserInputType == Enum.UserInputType.Touch then
+                local conn
+                conn = input.Changed:Connect(function(prop)
+                    if prop == "Position" then
+                        MoveTo(input.Position)
+                    end
+                    if input.UserInputState == Enum.UserInputState.End then
+                        if conn then conn:Disconnect() end
+                        DoActivate()
+                        if activeInput == input then activeInput = nil end
+                    end
+                end)
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if activeInput == nil then return end
+            if activeInput.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+            MoveTo(input.Position)
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if activeInput == nil then return end
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                and activeInput.UserInputType == Enum.UserInputType.MouseButton1 then
+                DoActivate()
+                activeInput = nil
             end
         end)
 
