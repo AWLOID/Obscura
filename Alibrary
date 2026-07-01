@@ -3733,10 +3733,13 @@ local function CreateWindow(config)
             end
         end
 
-        local function UpdateDrag(pos)
-            if not activeInput then return end
+        local function UpdateDrag(input)
+            if activeInput == nil then return end
+            local pos = input.Position
             local delta = pos - startInputPos
-            if not moved and delta.Magnitude > threshold then moved = true end
+            if not moved and delta.Magnitude > threshold then
+                moved = true
+            end
             if moved then
                 btn.Position = UDim2.new(
                     startBtnPos.X.Scale,
@@ -3771,31 +3774,29 @@ local function CreateWindow(config)
         end)
 
         btn.InputChanged:Connect(function(input)
-            if activeInput and (input.UserInputType == Enum.UserInputType.Touch
-                or input.UserInputType == Enum.UserInputType.MouseMovement) then
-                UpdateDrag(input.Position)
+            if activeInput == nil then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch then
+                UpdateDrag(input)
             end
         end)
 
         UserInputService.InputChanged:Connect(function(input)
-            if activeInput and (input.UserInputType == Enum.UserInputType.Touch
-                or input.UserInputType == Enum.UserInputType.MouseMovement) then
-                UpdateDrag(input.Position)
+            if activeInput == nil then return end
+            if input.UserInputType == Enum.UserInputType.Touch and input == activeInput then
+                UpdateDrag(input)
+            elseif input.UserInputType == Enum.UserInputType.MouseMovement
+                and activeInput.UserInputType == Enum.UserInputType.MouseButton1 then
+                UpdateDrag(input)
             end
         end)
 
         btn.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                EndDrag(input)
-            end
+            EndDrag(input)
         end)
 
         UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                EndDrag(input)
-            end
+            EndDrag(input)
         end)
 
         function handle:SetSize(px)
