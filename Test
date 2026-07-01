@@ -47,34 +47,106 @@ local function ClampOpenPosition(x, y, width, height)
     return math.clamp(x, 4, maxX), math.clamp(y, 4, maxY)
 end
 
-local function MakeDraggable(handle, target)
-    local dragging = false
-    local startInput
-    local startPos
+local function MakeDraggable(handle, target, onDragStart)
+    local activeInput = nil
+    local startInputPos = nil
+    local startTargetPos = nil
+
+    local function BeginDrag(input)
+        if activeInput ~= nil then
+            return
+        end
+        activeInput = input
+        startInputPos = input.Position
+        startTargetPos = target.Position
+        if onDragStart then
+            onDragStart()
+        end
+
+        local connChanged
+        local connEnded
+
+        connChanged = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                if connChanged then connChanged:Disconnect() end
+                if connEnded then connEnded:Disconnect() end
+                if activeInput == input then
+                    activeInput = nil
+                end
+            end
+        end)
+
+        connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+            if endedInput == input then
+                if connChanged then connChanged:Disconnect() end
+                if connEnded then connEnded:Disconnect() end
+                if activeInput == input then
+                    activeInput = nil
+                end
+            end
+        end)
+    end
 
     handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            startInput = input.Position
-            startPos = target.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
+            BeginDrag(input)
         end
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - startInput
-            target.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
+        if activeInput == nil or input ~= activeInput then
+            return
         end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local delta = input.Position - startInputPos
+        target.Position = UDim2.new(
+            startTargetPos.X.Scale,
+            startTargetPos.X.Offset + delta.X,
+            startTargetPos.Y.Scale,
+            startTargetPos.Y.Offset + delta.Y
+        )
+    end)
+end
+
+local function MakeValueDragger(hitTargets, onInputDown, onInputMove)
+    local activeInput = nil
+
+    local function Bind(obj)
+        obj.InputBegan:Connect(function(input)
+            if activeInput ~= nil then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                activeInput = input
+                onInputDown(input)
+
+                local connEnded
+                connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+                    if endedInput == input then
+                        if activeInput == input then
+                            activeInput = nil
+                        end
+                        if connEnded then connEnded:Disconnect() end
+                    end
+                end)
+            end
+        end)
+    end
+
+    for _, obj in ipairs(hitTargets) do
+        Bind(obj)
+    end
+
+    UserInputService.InputChanged:Connect(function(input)
+        if activeInput == nil or input ~= activeInput then
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        onInputMove(input)
     end)
 end
 
@@ -202,7 +274,7 @@ local function CreateElementFactory(context)
             Parent = parent,
         })
 
-        NewInstance("TextLabel", {
+        local titleLabel = NewInstance("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(0, 0, 1, 0),
             AutomaticSize = Enum.AutomaticSize.X,
@@ -213,6 +285,10 @@ local function CreateElementFactory(context)
             Text = string.upper(text or ""),
             Parent = row,
         })
+
+        Accent.Changed:Connect(function(color)
+            titleLabel.TextColor3 = color
+        end)
 
         local line = NewInstance("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
@@ -262,6 +338,13 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
+        local boxStroke = NewInstance("UIStroke", {
+            Color = Accent.Value,
+            Transparency = default and 0.3 or 1,
+            Thickness = 1,
+            Parent = box,
+        })
+
         local fill = NewInstance("Frame", {
             Size = UDim2.fromScale(1, 1),
             BackgroundColor3 = Accent.Value,
@@ -274,15 +357,19 @@ local function CreateElementFactory(context)
 
         local function ApplyVisual(animated)
             local goal = { BackgroundTransparency = state and 0 or 1 }
+            local strokeGoal = { Transparency = state and 0.3 or 1 }
             if animated then
                 TweenService:Create(fill, TweenInfo.new(0.15), goal):Play()
+                TweenService:Create(boxStroke, TweenInfo.new(0.15), strokeGoal):Play()
             else
                 fill.BackgroundTransparency = goal.BackgroundTransparency
+                boxStroke.Transparency = strokeGoal.Transparency
             end
         end
 
         Accent.Changed:Connect(function(color)
             fill.BackgroundColor3 = color
+            boxStroke.Color = color
         end)
 
         box.MouseButton1Click:Connect(function()
@@ -363,20 +450,6 @@ local function CreateElementFactory(context)
         end)
 
         local currentValue = default
-        local dragging = false
-
-        local function ApplyValue(value, fromUser)
-            value = math.clamp(value, min, max)
-            value = RoundTo(value, step)
-            currentValue = value
-            local ratio = (max > min) and Clamp01((value - min) / (max - min)) or 0
-            fill.Size = UDim2.new(ratio, 0, 1, 0)
-            knob.Position = UDim2.new(ratio, 0, 0.5, 0)
-            label.Text = name .. ": " .. tostring(value)
-            if fromUser and callback then
-                callback(value)
-            end
-        end
 
         local function UpdateFromX(xPos)
             local trackPos = track.AbsolutePosition.X
@@ -385,29 +458,10 @@ local function CreateElementFactory(context)
             ApplyValue(min + (max - min) * ratio, true)
         end
 
-        knob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                UpdateFromX(input.Position.X)
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-            end
-        end)
-
-        track.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                UpdateFromX(input.Position.X)
-                dragging = true
-            end
+        MakeValueDragger({ knob, track }, function(input)
+            UpdateFromX(input.Position.X)
+        end, function(input)
+            UpdateFromX(input.Position.X)
         end)
 
         local api = {}
@@ -595,7 +649,7 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
-        NewInstance("UIStroke", {
+        local boxStroke = NewInstance("UIStroke", {
             Color = Color3.fromRGB(60, 60, 60),
             Thickness = 1,
             Parent = box,
@@ -615,6 +669,9 @@ local function CreateElementFactory(context)
 
         Accent.Changed:Connect(function(color)
             arrow.TextColor3 = color
+            if isOpen then
+                boxStroke.Color = color
+            end
         end)
 
         local optionsHolder = NewInstance("Frame", {
@@ -644,6 +701,7 @@ local function CreateElementFactory(context)
         local function Close()
             isOpen = false
             optionsHolder.Visible = false
+            boxStroke.Color = Color3.fromRGB(60, 60, 60)
         end
 
         local function RebuildOptions()
@@ -690,6 +748,7 @@ local function CreateElementFactory(context)
             optionsHolder.Position = UDim2.fromOffset(x, y)
             optionsHolder.Visible = true
             isOpen = true
+            boxStroke.Color = Accent.Value
         end
 
         box.MouseButton1Click:Connect(function()
@@ -1143,8 +1202,6 @@ local function CreateElementFactory(context)
         })
 
         local isOpen = false
-        local draggingSV = false
-        local draggingHue = false
 
         local function ApplyColor(fromUser)
             currentColor = Color3.fromHSV(h, s, v)
@@ -1173,35 +1230,16 @@ local function CreateElementFactory(context)
             ApplyColor(true)
         end
 
-        svMap.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingSV = true
-                SetSV(input.Position.X, input.Position.Y)
-            end
+        MakeValueDragger({ svMap }, function(input)
+            SetSV(input.Position.X, input.Position.Y)
+        end, function(input)
+            SetSV(input.Position.X, input.Position.Y)
         end)
 
-        hueTrack.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingHue = true
-                SetHue(input.Position.X)
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                if draggingSV then
-                    SetSV(input.Position.X, input.Position.Y)
-                elseif draggingHue then
-                    SetHue(input.Position.X)
-                end
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingSV = false
-                draggingHue = false
-            end
+        MakeValueDragger({ hueTrack }, function(input)
+            SetHue(input.Position.X)
+        end, function(input)
+            SetHue(input.Position.X)
         end)
 
         hexBox.FocusLost:Connect(function()
@@ -1462,8 +1500,8 @@ local function CreateElementFactory(context)
             Parent = row,
         })
 
-        NewInstance("UIStroke", {
-            Color = Color3.fromRGB(70, 70, 70),
+        local boxStroke = NewInstance("UIStroke", {
+            Color = default and Accent.Value or Color3.fromRGB(70, 70, 70),
             Thickness = 1,
             Parent = box,
         })
@@ -1479,15 +1517,21 @@ local function CreateElementFactory(context)
             Parent = box,
         })
 
+        local state = default
+
+        local function ApplyStrokeColor()
+            boxStroke.Color = state and Accent.Value or Color3.fromRGB(70, 70, 70)
+        end
+
         Accent.Changed:Connect(function(color)
             check.TextColor3 = color
+            ApplyStrokeColor()
         end)
-
-        local state = default
 
         box.MouseButton1Click:Connect(function()
             state = not state
             check.Visible = state
+            ApplyStrokeColor()
             if callback then
                 callback(state)
             end
@@ -1497,6 +1541,7 @@ local function CreateElementFactory(context)
         function api.Set(value)
             state = value
             check.Visible = state
+            ApplyStrokeColor()
         end
         function api.Get()
             return state
@@ -1722,12 +1767,21 @@ local function CreateElementFactory(context)
             end
         end
 
+        local function FlashButton(btn)
+            TweenService:Create(btn, TweenInfo.new(0.08), { TextColor3 = Accent.Value }):Play()
+            task.delay(0.12, function()
+                TweenService:Create(btn, TweenInfo.new(0.15), { TextColor3 = Color3.fromRGB(200, 200, 200) }):Play()
+            end)
+        end
+
         minusBtn.MouseButton1Click:Connect(function()
             SetValue(currentValue - step, true)
+            FlashButton(minusBtn)
         end)
 
         plusBtn.MouseButton1Click:Connect(function()
             SetValue(currentValue + step, true)
+            FlashButton(plusBtn)
         end)
 
         local api = {}
@@ -1813,8 +1867,6 @@ local function CreateElementFactory(context)
 
         local currentLow = defaultLow
         local currentHigh = defaultHigh
-        local draggingLow = false
-        local draggingHigh = false
 
         local function ApplyRange(fromUser)
             local lr = Clamp01((currentLow - min) / (max - min))
@@ -1847,33 +1899,16 @@ local function CreateElementFactory(context)
             ApplyRange(true)
         end
 
-        lowKnob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingLow = true
-            end
+        MakeValueDragger({ lowKnob }, function(input)
+            UpdateLow(input.Position.X)
+        end, function(input)
+            UpdateLow(input.Position.X)
         end)
 
-        highKnob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingHigh = true
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                if draggingLow then
-                    UpdateLow(input.Position.X)
-                elseif draggingHigh then
-                    UpdateHigh(input.Position.X)
-                end
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                draggingLow = false
-                draggingHigh = false
-            end
+        MakeValueDragger({ highKnob }, function(input)
+            UpdateHigh(input.Position.X)
+        end, function(input)
+            UpdateHigh(input.Position.X)
         end)
 
         local api = {}
@@ -2087,7 +2122,6 @@ local function CreateElementFactory(context)
 
         local toggleState = toggleDefault
         local sliderValue = sliderDefault
-        local dragging = false
 
         box.MouseButton1Click:Connect(function()
             toggleState = not toggleState
@@ -2110,29 +2144,10 @@ local function CreateElementFactory(context)
             end
         end
 
-        knob.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                UpdateFromX(input.Position.X)
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-            end
-        end)
-
-        track.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                UpdateFromX(input.Position.X)
-                dragging = true
-            end
+        MakeValueDragger({ knob, track }, function(input)
+            UpdateFromX(input.Position.X)
+        end, function(input)
+            UpdateFromX(input.Position.X)
         end)
 
         local api = {}
@@ -2344,6 +2359,292 @@ local function CreateElementFactory(context)
         return api
     end
 
+    function Factory.Input(parent, config)
+        config = config or {}
+        local name = config.Name or "Input"
+        local default = config.Default or ""
+        local placeholder = config.Placeholder or ""
+        local numeric = config.Numeric or false
+        local min = config.Min
+        local max = config.Max
+        local callback = config.Callback
+
+        local row = NewInstance("Frame", {
+            Name = "Input_" .. name,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 40),
+            Parent = parent,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+            TextColor3 = Color3.fromRGB(200, 200, 200),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = row,
+        })
+
+        local box = NewInstance("TextBox", {
+            Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 20),
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            BorderSizePixel = 0,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            PlaceholderText = placeholder,
+            PlaceholderColor3 = Color3.fromRGB(110, 110, 110),
+            ClearTextOnFocus = false,
+            Text = tostring(default),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = row,
+        })
+
+        if numeric then
+            box.TextWrapped = false
+        end
+
+        local boxStroke = NewInstance("UIStroke", {
+            Color = Color3.fromRGB(60, 60, 60),
+            Thickness = 1,
+            Parent = box,
+        })
+
+        NewInstance("UIPadding", {
+            PaddingLeft = UDim.new(0, 6),
+            PaddingRight = UDim.new(0, 6),
+            Parent = box,
+        })
+
+        box.Focused:Connect(function()
+            boxStroke.Color = Accent.Value
+        end)
+
+        box.FocusLost:Connect(function(enterPressed)
+            boxStroke.Color = Color3.fromRGB(60, 60, 60)
+
+            if numeric then
+                local n = tonumber(box.Text)
+                if n == nil then
+                    n = tonumber(default) or 0
+                end
+                if min then n = math.max(n, min) end
+                if max then n = math.min(n, max) end
+                box.Text = tostring(n)
+                if callback then
+                    callback(n, enterPressed)
+                end
+            else
+                if callback then
+                    callback(box.Text, enterPressed)
+                end
+            end
+        end)
+
+        Accent.Changed:Connect(function(color)
+            if box:IsFocused() then
+                boxStroke.Color = color
+            end
+        end)
+
+        local api = {}
+        function api.Set(value)
+            box.Text = tostring(value)
+        end
+        function api.Get()
+            if numeric then
+                return tonumber(box.Text)
+            end
+            return box.Text
+        end
+        return api
+    end
+
+    function Factory.Group(parent, config)
+        config = config or {}
+        local name = config.Name or "Group"
+        local startOpen = config.Open
+        if startOpen == nil then
+            startOpen = true
+        end
+
+        local container = NewInstance("Frame", {
+            Name = "Group_" .. name,
+            BackgroundColor3 = Color3.fromRGB(18, 18, 18),
+            BorderSizePixel = 0,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Parent = parent,
+        })
+
+        NewInstance("UIStroke", {
+            Color = Color3.fromRGB(50, 50, 50),
+            Thickness = 1,
+            Parent = container,
+        })
+
+        local outerLayout = NewInstance("UIListLayout", {
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = container,
+        })
+
+        local header = NewInstance("TextButton", {
+            Name = "Header",
+            BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Size = UDim2.new(1, 0, 0, 28),
+            Text = "",
+            Parent = container,
+        })
+
+        NewInstance("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -32, 1, 0),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Color3.fromRGB(210, 210, 210),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = name,
+            Parent = header,
+        })
+
+        local chevron = NewInstance("TextLabel", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(16, 16),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextColor3 = Accent.Value,
+            Text = startOpen and "v" or ">",
+            Parent = header,
+        })
+
+        Accent.Changed:Connect(function(color)
+            chevron.TextColor3 = color
+        end)
+
+        local body = NewInstance("Frame", {
+            Name = "Body",
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0),
+            Visible = startOpen,
+            Parent = container,
+        })
+
+        NewInstance("UIPadding", {
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8),
+            PaddingBottom = UDim.new(0, 10),
+            Parent = body,
+        })
+
+        local bodyLayout = NewInstance("UIListLayout", {
+            Padding = UDim.new(0, 10),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = body,
+        })
+
+        local isOpen = startOpen
+
+        header.MouseButton1Click:Connect(function()
+            isOpen = not isOpen
+            body.Visible = isOpen
+            chevron.Text = isOpen and "v" or ">"
+        end)
+
+        local Group = {}
+        Group.Instance = container
+
+        function Group:AddLabel(text)
+            return Factory.Label(body, text)
+        end
+        function Group:AddParagraph(cfg)
+            return Factory.Paragraph(body, cfg)
+        end
+        function Group:AddSection(text)
+            return Factory.Section(body, text)
+        end
+        function Group:AddToggle(cfg)
+            return Factory.Toggle(body, cfg)
+        end
+        function Group:AddCheckbox(cfg)
+            return Factory.Checkbox(body, cfg)
+        end
+        function Group:AddSlider(cfg)
+            return Factory.Slider(body, cfg)
+        end
+        function Group:AddRangeSlider(cfg)
+            return Factory.RangeSlider(body, cfg)
+        end
+        function Group:AddStepper(cfg)
+            return Factory.Stepper(body, cfg)
+        end
+        function Group:AddButton(cfg)
+            return Factory.Button(body, cfg)
+        end
+        function Group:AddToggleSlider(cfg)
+            return Factory.ToggleSlider(body, cfg)
+        end
+        function Group:AddDropdown(cfg)
+            return Factory.Dropdown(body, cfg)
+        end
+        function Group:AddMultiDropdown(cfg)
+            return Factory.MultiDropdown(body, cfg)
+        end
+        function Group:AddSearchableDropdown(cfg)
+            return Factory.SearchableDropdown(body, cfg)
+        end
+        function Group:AddRadioGroup(cfg)
+            return Factory.RadioGroup(body, cfg)
+        end
+        function Group:AddColorPicker(cfg)
+            return Factory.ColorPicker(body, cfg)
+        end
+        function Group:AddTextbox(cfg)
+            return Factory.Textbox(body, cfg)
+        end
+        function Group:AddInput(cfg)
+            return Factory.Input(body, cfg)
+        end
+        function Group:AddKeybind(cfg)
+            return Factory.Keybind(body, cfg)
+        end
+        function Group:AddProgressBar(cfg)
+            return Factory.ProgressBar(body, cfg)
+        end
+        function Group:AddImage(cfg)
+            return Factory.Image(body, cfg)
+        end
+        function Group:AddKeyValue(cfg)
+            return Factory.KeyValue(body, cfg)
+        end
+        function Group:AddBadge(cfg)
+            return Factory.Badge(body, cfg)
+        end
+        function Group:AddDivider()
+            return Factory.Divider(body)
+        end
+        function Group:AddSpacer(height)
+            return Factory.Spacer(body, height)
+        end
+        function Group:AddGroup(cfg)
+            return Factory.Group(body, cfg)
+        end
+        function Group:SetOpen(open)
+            isOpen = open
+            body.Visible = isOpen
+            chevron.Text = isOpen and "v" or ">"
+        end
+
+        return Group
+    end
+
     return Factory
 end
 
@@ -2482,6 +2783,14 @@ local function CreateTab(context, tabName, isFirst)
 
     function Tab:AddSearchableDropdown(config)
         return Factory.SearchableDropdown(scroll, config)
+    end
+
+    function Tab:AddInput(config)
+        return Factory.Input(scroll, config)
+    end
+
+    function Tab:AddGroup(config)
+        return Factory.Group(scroll, config)
     end
 
     function Tab:Refresh()
@@ -2831,8 +3140,61 @@ local function CreateWindow(config)
     end)
 
     openButton.MouseButton1Click:Connect(function()
-        Window:Toggle()
+        if not openButton:GetAttribute("WasDragged") then
+            Window:Toggle()
+        end
     end)
+
+    do
+        local DRAG_THRESHOLD = 6
+        local activeInput = nil
+        local startInputPos = nil
+        local startTargetPos = nil
+        local moved = false
+
+        openButton.InputBegan:Connect(function(input)
+            if activeInput ~= nil then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                activeInput = input
+                startInputPos = input.Position
+                startTargetPos = openButton.Position
+                moved = false
+                openButton:SetAttribute("WasDragged", false)
+
+                local connEnded
+                connEnded = UserInputService.InputEnded:Connect(function(endedInput)
+                    if endedInput == activeInput then
+                        activeInput = nil
+                        if connEnded then connEnded:Disconnect() end
+                    end
+                end)
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if activeInput == nil or input ~= activeInput then
+                return
+            end
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            local delta = input.Position - startInputPos
+            if not moved and delta.Magnitude > DRAG_THRESHOLD then
+                moved = true
+                openButton:SetAttribute("WasDragged", true)
+            end
+            if moved then
+                openButton.Position = UDim2.new(
+                    startTargetPos.X.Scale,
+                    startTargetPos.X.Offset + delta.X,
+                    startTargetPos.Y.Scale,
+                    startTargetPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+    end
 
     MakeDraggable(titleBar, mainWindow)
 
